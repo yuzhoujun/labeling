@@ -4,7 +4,7 @@
 开发环境: Python 3.9.25 | PyQt5
 
 功能说明:
-    独立数据标注工具正式版。集成了COCO/YOLO/VOC格式支持、多边形/矩形标注、图片增强、标签管理、自动保存、高级筛选导出等全套功能。
+    独立数据标注工具正式版。集成了COCO/YOLO/VOC格式支持、矩形标注、图片增强、标签管理、自动保存、高级筛选导出等全套功能。
 
 使用说明:
     1. 运行: python labeling_app_v1.0.py
@@ -19,17 +19,20 @@
 
 打包指令:
     [方案一] 适用于 PyInstaller 6.0+ (当前推荐，无加密，文件名N代表无加密):
-    指令: pyinstaller --noconsole --onefile --icon=assets/app_icon_colored.png --name="LabelingToolN_v1.0" --add-data "assets;assets" labeling_app_v1.0.py
-
+    指令（Windows）: pyinstaller --noconsole --onefile --icon=assets/app_icon_colored.png --name="LabelingToolN_v1.0" --add-data "assets;assets" labeling_app_v1.0.py
+    指令（Linux/Mac）: pyinstaller --noconsole --onefile --icon=assets/app_icon_colored.png --name="LabelingToolN_v1.0" --add-data "assets:assets" labeling_app_v1.0.py
+    
     [方案二] Nuitka 编译 (高安全性/防反编译，推荐):
     1. 安装: pip install nuitka
     2. 环境: 需 C++ 编译器 (首次运行 Nuitka 会提示下载 MinGW64，选 Yes 下载即可)
     3. 准备: Nuitka 在 Windows 下必须使用 .ico 格式图标！请先将 png 转为 ico。
-    4. 指令: nuitka --standalone --onefile --enable-plugin=pyqt5 --windows-disable-console --windows-icon-from-ico=assets/app_icon_colored.ico --output-filename=LabelingTool_v1.0.exe --include-data-dir=assets=assets labeling_app_v1.0.py
+    4. 指令（Windows）: nuitka --standalone --onefile --enable-plugin=pyqt5 --windows-disable-console --windows-icon-from-ico=assets/app_icon_colored.ico --output-filename=LabelingTool_v1.0.exe --include-data-dir=assets=assets labeling_app_v1.0.py
+       指令（Linux/Mac）: nuitka --standalone --onefile --enable-plugin=pyqt5 --macos-create-app-bundle --macos-app-icon=assets/app_icon_colored.icns --output-filename=LabelingTool_v1.0.app --include-data-dir=assets=assets labeling_app_v1.0.py
+
 
 开发者信息:
     作者: yuzhoujun
-    Github: https://github.com/yuzhoujun
+    Github: https://github.com/yuzhoujun/labeling
     邮箱: zxy2445665133@outlook.com
 """
 
