@@ -1,0 +1,2569 @@
+"""
+项目名称: 独立数据标注工具 (Labeling Tool)
+版本: v0.4.1
+开发环境: Python 3.9+ | PyQt5
+
+功能说明:
+    v0.4 版本的优化版，重点改进筛选交互与绘制细节。
+    主要功能:
+    1. 筛选增强: 优化筛选逻辑，修复特定条件下的匹配 bug。
+    2. 视觉优化: 调整图标位置与显示逻辑。
+
+使用说明:
+    同 v0.4。
+
+更新日志 (v0.4.1):
+    [优化] 表头排序图标与筛选图标的布局位置，避免遮挡文字。
+    [修复] 某些输入框在中文输入法下的兼容性问题 (ChineseLineEdit)。
+
+打包指令:
+    pyinstaller --noconsole --onefile --icon=assets/app_icon_colored.png --name="LabelingTool_v0.4.1" --add-data "assets;assets" labeling_app_v0.4.1.py
+"""
+
+import sys
+import os
+import json
+import random
+import math
+from datetime import datetime
+import xml.etree.ElementTree as ET
+
+# Global App Info
+APP_NAME = "LabelingTool"
+APP_NAME_FULL = "独立数据标注工具 (Labeling Tool)"
+APP_VERSION = "0.4.1"
+
+from xml.dom import minidom
+from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
+                             QLabel, QPushButton, QLineEdit, QFileDialog, 
+                             QMessageBox, QSplitter, QTableWidget, QTableWidgetItem,
+                             QFrame, QSizePolicy, QInputDialog, QMenu, QAction, QHeaderView,
+                             QColorDialog, QDialog, QComboBox, QAbstractItemView, QCheckBox,
+                             QScrollArea, QGridLayout, QDateTimeEdit, QStyledItemDelegate, QStyle, QStyleOptionViewItem)
+from PyQt5.QtCore import Qt, QSize, QPoint, QPointF, QRectF, QRect, QEvent, QDate, QTime, QDateTime
+from PyQt5.QtGui import QPixmap, QIcon, QPainter, QColor, QPen, QBrush, QPolygonF
+
+# ============================================
+# 工具函数与类
+# ============================================
+
+def resource_path(relative_path):
+    base_path = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base_path, relative_path)
+
+def get_timestamp():
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+class DarkDialogHelper:
+    """ 深色主题对话框辅助类 """
+    @staticmethod
+    def get_text(parent, title, label, text=""):
+        dialog = QInputDialog(parent)
+        dialog.setOptions(QInputDialog.UseListViewForComboBoxItems)
+        dialog.setWindowTitle(title)
+        dialog.setLabelText(label)
+        dialog.setTextValue(text)
+        dialog.setOkButtonText("确定")
+        dialog.setCancelButtonText("取消")
+        dialog.setStyleSheet(parent.styleSheet())
+        ret = dialog.exec_()
+        return dialog.textValue(), ret == QDialog.Accepted
+
+    @staticmethod
+    def get_item(parent, title, label, items, current=0, editable=False):
+        dialog = QInputDialog(parent)
+        dialog.setWindowTitle(title)
+        dialog.setLabelText(label)
+        dialog.setComboBoxItems(items)
+        dialog.setTextValue(items[current] if items else "")
+        dialog.setComboBoxEditable(editable)
+        dialog.setOkButtonText("确定")
+        dialog.setCancelButtonText("取消")
+        dialog.setStyleSheet(parent.styleSheet())
+        ret = dialog.exec_()
+        return dialog.textValue(), ret == QDialog.Accepted
+
+    @staticmethod
+    def get_color(parent, initial=QColor(255, 255, 255), title="选择颜色"):
+        dialog = QColorDialog(initial, parent)
+        dialog.setWindowTitle(title)
+        dialog.setOption(QColorDialog.DontUseNativeDialog, True) 
+        dialog.setStyleSheet(parent.styleSheet() + "QWidget{background-color: #2b2b2b; color: #e0e0e0;}")
+        if dialog.exec_() == QDialog.Accepted:
+            return dialog.selectedColor()
+        return QColor()
+
+    @staticmethod
+    def get_int(parent, title, label, value=0, min_val=0, max_val=9999):
+        dialog = QInputDialog(parent)
+        dialog.setWindowTitle(title)
+        dialog.setLabelText(label)
+        dialog.setIntValue(value)
+        dialog.setIntRange(min_val, max_val)
+        dialog.setOkButtonText("确定")
+        dialog.setCancelButtonText("取消")
+        dialog.setStyleSheet(parent.styleSheet())
+        ret = dialog.exec_()
+        return dialog.intValue(), ret == QDialog.Accepted
+
+    @staticmethod
+    def show_info(parent, title, text):
+        msg = QMessageBox(parent)
+        msg.setWindowTitle(title)
+        msg.setText(text)
+        msg.setIcon(QMessageBox.Information)
+        msg.addButton("确定", QMessageBox.AcceptRole)
+        msg.setStyleSheet(parent.styleSheet())
+        msg.exec_()
+
+    @staticmethod
+    def show_warning(parent, title, text):
+        msg = QMessageBox(parent)
+        msg.setWindowTitle(title)
+        msg.setText(text)
+        msg.setIcon(QMessageBox.Warning)
+        msg.addButton("确定", QMessageBox.AcceptRole)
+        msg.setStyleSheet(parent.styleSheet())
+        msg.exec_()
+
+    @staticmethod
+    def show_critical(parent, title, text):
+        msg = QMessageBox(parent)
+        msg.setWindowTitle(title)
+        msg.setText(text)
+        msg.setIcon(QMessageBox.Critical)
+        msg.addButton("确定", QMessageBox.AcceptRole)
+        msg.setStyleSheet(parent.styleSheet())
+        msg.exec_()
+
+    @staticmethod
+    def ask_yes_no(parent, title, text):
+        msg = QMessageBox(parent)
+        msg.setWindowTitle(title)
+        msg.setText(text)
+        msg.setIcon(QMessageBox.Question)
+        yes_btn = msg.addButton("是", QMessageBox.YesRole)
+        msg.addButton("否", QMessageBox.NoRole)
+        msg.setStyleSheet(parent.styleSheet())
+        msg.exec_()
+        return msg.clickedButton() == yes_btn
+
+    @staticmethod
+    def ask_yes_no_cancel(parent, title, text):
+        msg = QMessageBox(parent)
+        msg.setWindowTitle(title)
+        msg.setText(text)
+        msg.setIcon(QMessageBox.Question)
+        yes_btn = msg.addButton("是", QMessageBox.YesRole)
+        no_btn = msg.addButton("否", QMessageBox.NoRole)
+        msg.addButton("取消", QMessageBox.RejectRole)
+        msg.setStyleSheet(parent.styleSheet())
+        msg.exec_()
+        
+        if msg.clickedButton() == yes_btn: return QMessageBox.Yes
+        if msg.clickedButton() == no_btn: return QMessageBox.No
+        return QMessageBox.Cancel
+
+class ChineseLineEdit(QLineEdit):
+    def contextMenuEvent(self, event):
+        menu = QMenu(self)
+        
+        # 撤销
+        a_undo = menu.addAction("撤销")
+        if a_undo:
+            a_undo.setShortcut("Ctrl+Z")
+            a_undo.triggered.connect(self.undo)
+            a_undo.setEnabled(self.isUndoAvailable())
+        
+        # 重做
+        a_redo = menu.addAction("重做")
+        if a_redo:
+            a_redo.setShortcut("Ctrl+Y")
+            a_redo.triggered.connect(self.redo)
+            a_redo.setEnabled(self.isRedoAvailable())
+        
+        menu.addSeparator()
+        
+        # 剪切
+        a_cut = menu.addAction("剪切")
+        if a_cut:
+            a_cut.setShortcut("Ctrl+X")
+            a_cut.triggered.connect(self.cut)
+            a_cut.setEnabled(self.hasSelectedText())
+        
+        # 复制
+        a_copy = menu.addAction("复制")
+        if a_copy:
+            a_copy.setShortcut("Ctrl+C")
+            a_copy.triggered.connect(self.copy)
+            a_copy.setEnabled(self.hasSelectedText())
+        
+        # 粘贴
+        a_paste = menu.addAction("粘贴")
+        if a_paste:
+            a_paste.setShortcut("Ctrl+V")
+            a_paste.triggered.connect(self.paste)
+            clipboard = QApplication.clipboard()
+            a_paste.setEnabled(bool(clipboard.text() if clipboard else False))
+
+        # 删除
+        a_del = menu.addAction("删除")
+        if a_del:
+            a_del.triggered.connect(self.backspace) # backspace 删除选中文本
+            a_del.setEnabled(self.hasSelectedText())
+        
+        menu.addSeparator()
+        
+        # 全选
+        a_all = menu.addAction("全选")
+        if a_all:
+            a_all.setShortcut("Ctrl+A")
+            a_all.triggered.connect(self.selectAll)
+        
+        menu.exec_(event.globalPos())
+
+class ComboBoxWithArrow(QComboBox):
+    """
+    QComboBox with a custom painted arrow to indicate state clearly.
+    Replacing the default drop-down arrow style with a simple painted one usually requires QStyle,
+    but we can patch it via styleSheet or painting.
+    User requested: Green small triangle on right side.
+    """
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        # Using Stylesheet for arrow is easier than paintEvent override for standard widgets
+        # The down-arrow subcontrol
+        self.setStyleSheet("""
+            QComboBox {
+                border: 1px solid #555;
+                border-radius: 3px;
+                padding: 1px 18px 1px 3px;
+                min-width: 6em;
+                background: #333;
+                color: #eee;
+            }
+            QComboBox:hover {
+                border: 1px solid #00aaff;
+            }
+            QComboBox::drop-down {
+                subcontrol-origin: padding;
+                subcontrol-position: top right;
+                width: 20px;
+                border-left-width: 0px;
+                border-top-right-radius: 3px;
+                border-bottom-right-radius: 3px;
+            }
+            /* Custom Green Triangle */
+            QComboBox::down-arrow {
+                image: none;
+                border-left: 5px solid transparent;
+                border-right: 5px solid transparent;
+                border-top: 5px solid #00ff00; /* Green Down Triangle */
+                margin-right: 5px;
+            }
+            QComboBox::down-arrow:on { /* When popup is open */
+               border-top: none;
+               border-bottom: 5px solid #00ff00; /* Green Up Triangle */
+            }
+        """)
+
+# ============================================
+# 筛选逻辑相关
+# ============================================
+
+class FilterCondition:
+    TYPE_TEXT = "text"
+    TYPE_NUMBER = "number"
+    TYPE_DATETIME = "datetime"
+    
+    OP_EQ = "等于"
+    OP_CONTAINS = "包含"
+    OP_NEQ = "不等于"
+    OP_NOT_CONTAINS = "不包含"
+    OP_GT = "大于"
+    OP_LT = "小于"
+    OP_GTE = "大于等于"
+    OP_LTE = "小于等于"
+    
+    # 日期维度
+    DT_YEAR = "年"
+    DT_MONTH = "月"
+    DT_DAY = "日"
+    DT_HOUR = "时"
+    DT_MINUTE = "分"
+    DT_SECOND = "秒"
+    
+    def __init__(self, col_idx, col_type, operator, value, dt_dim=None):
+        self.col_idx = col_idx
+        self.col_type = col_type
+        self.operator = operator
+        self.value = value
+        self.dt_dim = dt_dim # 仅用于 DateTime
+
+class AdvancedFilterDialog(QDialog):
+    def __init__(self, parent, columns, current_filters=None):
+        super().__init__(parent)
+        self.setWindowTitle("高级筛选设置")
+        self.setMinimumWidth(600)
+        self.setMinimumHeight(400)
+        self.columns = columns # list of (name, type)
+        self.filters = []
+        
+        # Load existing
+        if current_filters:
+            # Deep copy to avoid modifying original until confirmed
+            pass # We will load them in init_ui or separate method
+            
+        layout = QVBoxLayout(self)
+        
+        # Scroll Area for rows
+        self.scroll = QScrollArea()
+        self.scroll.setWidgetResizable(True)
+        self.scroll_content = QWidget()
+        self.form_layout = QVBoxLayout(self.scroll_content)
+        self.form_layout.addStretch()
+        self.scroll.setWidget(self.scroll_content)
+        layout.addWidget(self.scroll)
+        
+        # Buttons
+        btn_layout = QHBoxLayout()
+        add_btn = QPushButton("添加筛选条件")
+        add_btn.clicked.connect(self.add_filter_row)
+        btn_layout.addWidget(add_btn)
+        
+        btn_layout.addStretch()
+        
+        clear_btn = QPushButton("清除所有")
+        clear_btn.clicked.connect(self.clear_all_rows)
+        # clear_btn.setStyleSheet("background-color: #c0392b;") 
+        btn_layout.addWidget(clear_btn)
+        
+        layout.addLayout(btn_layout)
+        
+        # Bottom Actions
+        action_layout = QHBoxLayout()
+        confirm_btn = QPushButton("确认筛选")
+        confirm_btn.clicked.connect(self.accept)
+        confirm_btn.setStyleSheet("background-color: #007acc; color: white;")
+        
+        cancel_btn = QPushButton("取消")
+        cancel_btn.clicked.connect(self.reject)
+        
+        action_layout.addStretch()
+        action_layout.addWidget(confirm_btn)
+        action_layout.addWidget(cancel_btn)
+        layout.addLayout(action_layout)
+        
+        self.rows = [] # list of widgets
+        
+        # Initialize
+        if current_filters:
+            for f in current_filters:
+                self.add_filter_row(initial_data=f)
+        
+        if not self.rows:
+            self.add_filter_row() # Add one empty row by default
+
+    def add_filter_row(self, initial_data=None):
+        row_widget = QFrame()
+        row_widget.setFrameShape(QFrame.StyledPanel)
+        row_widget.setStyleSheet("QFrame { background-color: #333; border-radius: 4px; border: 1px solid #444; margin-bottom: 5px; }")
+        
+        h_layout = QHBoxLayout(row_widget)
+        h_layout.setContentsMargins(5, 5, 5, 5)
+        
+        # Column Select
+        col_combo = ComboBoxWithArrow()
+        for name, _ in self.columns:
+            col_combo.addItem(name)
+        h_layout.addWidget(col_combo, 1)
+
+        # DateTime Dimension Select (Hidden by default)
+        dt_dim_combo = ComboBoxWithArrow()
+        dt_dim_combo.addItems(["整串匹配", FilterCondition.DT_YEAR, FilterCondition.DT_MONTH, FilterCondition.DT_DAY, 
+                               FilterCondition.DT_HOUR, FilterCondition.DT_MINUTE, FilterCondition.DT_SECOND])
+        dt_dim_combo.setVisible(False)
+        h_layout.addWidget(dt_dim_combo)
+
+        # Operator Select
+        op_combo = ComboBoxWithArrow()
+        # Default operators (Text)
+        op_combo.addItems([FilterCondition.OP_EQ, FilterCondition.OP_CONTAINS, FilterCondition.OP_NEQ, FilterCondition.OP_NOT_CONTAINS])
+        h_layout.addWidget(op_combo, 1)
+        
+        # Value Input
+        val_input = ChineseLineEdit()
+        val_input.setPlaceholderText("输入筛选值...")
+        h_layout.addWidget(val_input, 2)
+        
+        # Remove Button
+        rm_btn = QPushButton()
+        rm_btn.setFixedSize(28, 28)
+        icon_path = resource_path("assets/icon_trash.png")
+        if os.path.exists(icon_path):
+            rm_btn.setIcon(QIcon(icon_path))
+            rm_btn.setIconSize(QSize(18, 18))
+        else:
+            rm_btn.setText("X")
+            
+        rm_btn.setObjectName("removeButton")
+        rm_btn.setCursor(Qt.PointingHandCursor) # type: ignore
+        rm_btn.clicked.connect(lambda: self.remove_row(row_widget))
+        h_layout.addWidget(rm_btn)
+        
+        # Logic to update operators based on column
+        def on_col_changed(idx):
+            name, ctype = self.columns[idx]
+            dt_dim_combo.setVisible(False)
+            op_combo.clear()
+            val_input.clear()
+            
+            if ctype == FilterCondition.TYPE_NUMBER:
+                op_combo.addItems([FilterCondition.OP_EQ, FilterCondition.OP_CONTAINS, FilterCondition.OP_NEQ, FilterCondition.OP_NOT_CONTAINS, 
+                                   FilterCondition.OP_GT, FilterCondition.OP_LT, FilterCondition.OP_GTE, FilterCondition.OP_LTE])
+                val_input.setPlaceholderText("输入数值...")
+            elif ctype == FilterCondition.TYPE_DATETIME:
+                dt_dim_combo.setVisible(True)
+                op_combo.addItems([FilterCondition.OP_EQ, FilterCondition.OP_CONTAINS, FilterCondition.OP_NEQ, FilterCondition.OP_NOT_CONTAINS, 
+                                   FilterCondition.OP_GT, FilterCondition.OP_LT, FilterCondition.OP_GTE, FilterCondition.OP_LTE])
+                val_input.setPlaceholderText("输入时间 (如 2023)")
+            else: # Text
+                op_combo.addItems([FilterCondition.OP_EQ, FilterCondition.OP_CONTAINS, FilterCondition.OP_NEQ, FilterCondition.OP_NOT_CONTAINS])
+                val_input.setPlaceholderText("输入文本...")
+                
+        col_combo.currentIndexChanged.connect(on_col_changed)
+        
+        # Initial Set
+        if initial_data:
+            col_idx = initial_data.col_idx
+            # Find combo index
+            if 0 <= col_idx < col_combo.count():
+                col_combo.setCurrentIndex(col_idx)
+                on_col_changed(col_idx) # Force update ops
+                
+                # Set dimension if DT
+                if initial_data.col_type == FilterCondition.TYPE_DATETIME and initial_data.dt_dim:
+                    dt_idx = dt_dim_combo.findText(initial_data.dt_dim)
+                    if dt_idx != -1: dt_dim_combo.setCurrentIndex(dt_idx)
+                
+                # Set Op
+                op_idx = op_combo.findText(initial_data.operator)
+                if op_idx != -1: op_combo.setCurrentIndex(op_idx)
+                
+                # Set Val
+                val_input.setText(str(initial_data.value))
+
+        # Add to layout
+        self.form_layout.insertWidget(self.form_layout.count()-1, row_widget)
+        self.rows.append({
+            "widget": row_widget,
+            "col_combo": col_combo,
+            "dt_dim_combo": dt_dim_combo,
+            "op_combo": op_combo,
+            "val_input": val_input
+        })
+        
+        # Trigger default logic for new empty row
+        if not initial_data:
+             on_col_changed(col_combo.currentIndex())
+
+    def remove_row(self, widget):
+        for i, r in enumerate(self.rows):
+            if r["widget"] == widget:
+                widget.deleteLater()
+                self.rows.pop(i)
+                break
+
+    def clear_all_rows(self):
+        for r in self.rows:
+            r["widget"].deleteLater()
+        self.rows = []
+
+    def get_filters(self):
+        res = []
+        for r in self.rows:
+            col_idx = r["col_combo"].currentIndex()
+            if col_idx == -1: continue
+            
+            col_name, col_type = self.columns[col_idx]
+            operator = r["op_combo"].currentText()
+            value = r["val_input"].text().strip()
+            
+            if not value and operator not in [FilterCondition.OP_EQ, FilterCondition.OP_CONTAINS]: 
+                 # Empty value only sensible for some comparisons? Actually strict empty check depends on user
+                 pass
+            
+            # Special Handling for DateTime Dimensions
+            dt_dim = None
+            if col_type == FilterCondition.TYPE_DATETIME:
+                 dt_text = r["dt_dim_combo"].currentText()
+                 if dt_text != "整串匹配":
+                     dt_dim = dt_text
+            
+            res.append(FilterCondition(col_idx, col_type, operator, value, dt_dim))
+        return res
+
+# ============================================
+# Modified CustomHeader
+# ============================================
+
+class CustomHeader(QHeaderView):
+    """ 自定义表头，支持 排序图标 + 筛选漏斗 """
+    def __init__(self, orientation=Qt.Horizontal, parent=None): # type: ignore
+        super().__init__(orientation, parent)
+        self.setSectionsClickable(True)
+        # 跟踪哪些列有筛选
+        self.active_filters = set() # Store logical indices of columns with active filters
+
+    def set_filter_state(self, logicalIndex, is_active):
+        if is_active:
+            self.active_filters.add(logicalIndex)
+        else:
+            if logicalIndex in self.active_filters:
+                self.active_filters.remove(logicalIndex)
+        vp = self.viewport()
+        if vp: vp.update()
+
+    def paintSection(self, painter, rect, logicalIndex):
+        if not painter: return
+        painter.save()
+        super().paintSection(painter, rect, logicalIndex)
+        painter.restore()
+
+        # 常量定义
+        icon_size = 8
+        margin = 5
+        
+        # 右侧区域 rect
+        right_rect_w = icon_size + margin * 2
+        # clear_rect: 盖住原本可能绘制在此处的文字末尾
+        clear_rect = QRectF(rect.right() - right_rect_w, rect.top(), right_rect_w, rect.height())
+        
+        # Draw Background for icons area
+        # backgroundRole usually works, but we hardcode matching theme header color to be safe
+        bg_color = QColor(51, 51, 51) 
+        painter.save()
+        painter.setPen(Qt.NoPen) # type: ignore
+        painter.setBrush(bg_color)
+        painter.drawRect(clear_rect)
+        painter.restore()
+        
+        cx = rect.right() - margin - icon_size/2
+        
+        # 1. 绘制排序图标 (三角形) - 位置：垂直居中偏下
+        if self.isSortIndicatorShown() and self.sortIndicatorSection() == logicalIndex:
+            painter.save()
+            painter.setRenderHint(QPainter.Antialiasing)
+            
+            # 下移一些: cy_sort
+            cy_sort = rect.center().y() + 7
+            
+            painter.setBrush(QColor(0, 120, 215)) # 蓝色
+            painter.setPen(Qt.NoPen) # type: ignore
+            
+            path = QPolygonF()
+            if self.sortIndicatorOrder() == Qt.AscendingOrder: # type: ignore
+                # 上三角形
+                p1 = QPointF(cx, cy_sort - icon_size/2)
+                p2 = QPointF(cx - icon_size/2, cy_sort + icon_size/2)
+                p3 = QPointF(cx + icon_size/2, cy_sort + icon_size/2)
+                path.append(p1); path.append(p2); path.append(p3)
+            else:
+                # 下三角形
+                p1 = QPointF(cx - icon_size/2, cy_sort - icon_size/2)
+                p2 = QPointF(cx + icon_size/2, cy_sort - icon_size/2)
+                p3 = QPointF(cx, cy_sort + icon_size/2)
+                path.append(p1); path.append(p2); path.append(p3)
+                
+            painter.drawPolygon(path)
+            painter.restore()
+
+        # 2. 绘制筛选漏斗 - 位置：垂直居中偏上
+        # 始终为位置预留，如果有 active filter 则高亮
+        has_filter = (logicalIndex in self.active_filters)
+        
+        painter.save()
+        painter.setRenderHint(QPainter.Antialiasing)
+        
+        # 颜色: 如果激活则 橙色/亮色，否则 灰色
+        filter_color = QColor(255, 140, 0) if has_filter else QColor(100, 100, 100)
+        painter.setPen(QPen(filter_color, 1.5))
+        painter.setBrush(Qt.NoBrush) # type: ignore
+        
+        cy_filter = rect.center().y() - 7
+        sz = 4 # half width
+        
+        # Funnel shape
+        # Top line
+        painter.drawLine(QPointF(cx - sz, cy_filter - sz), QPointF(cx + sz, cy_filter - sz))
+        # V shape down
+        p1 = QPointF(cx - sz, cy_filter - sz)
+        p2 = QPointF(cx + sz, cy_filter - sz)
+        p3 = QPointF(cx, cy_filter + 2)
+        # Tube down
+        p4 = QPointF(cx, cy_filter + 5)
+        
+        painter.drawLine(p1, p3)
+        painter.drawLine(p2, p3)
+        painter.drawLine(p3, p4)
+        
+        painter.restore()
+
+# ============================================
+# 自定义表格控件 (支持拖拽排序)
+# ============================================
+
+class NoSelectionColorDelegate(QStyledItemDelegate):
+    """
+    Delegate that renders the item background with its specific Color (from UserRole+1),
+    ignoring selection state for background, but drawing text normally.
+    """
+    def paint(self, painter, option, index):
+        # 1. Draw Background (Using stored color, ignoring selection)
+        color = index.data(Qt.UserRole + 1) # Get QColor stored in model
+        if isinstance(color, QColor):
+            painter.save()
+            painter.fillRect(option.rect, color)
+            painter.restore()
+        
+        # 2. Draw Text (Standard)
+        # We need to construct a new option with 'Selected' state removed 
+        # so standard paint doesn't draw the blue selection background over our rect
+        opt = QStyleOptionViewItem(option)
+        opt.state &= ~QStyle.State_Selected
+        # Ensure text is center aligned as set in item
+        super().paint(painter, opt, index)
+
+class DraggableTableWidget(QTableWidget):
+    """ 支持拖拽行进行排序或交换的表格 """
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setHorizontalHeader(CustomHeader(Qt.Horizontal, self)) # type: ignore
+        self.setDragEnabled(True)
+        self.setAcceptDrops(True)
+        vp = self.viewport()
+        if vp is not None: vp.setAcceptDrops(True)
+        self.setDragDropOverwriteMode(False)
+        self.setDropIndicatorShown(True)
+        self.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.setDragDropMode(QAbstractItemView.InternalMove)
+        
+        # Apply custom delegate to column 0
+        self.setItemDelegateForColumn(0, NoSelectionColorDelegate(self))
+
+        self.drag_start_row = -1
+        self.main_app = None 
+
+        # Filter storage
+        self.current_filter_list = [] # List of FilterCondition
+        self.col_def = [] # [(name, type), ...]
+
+
+    def set_main_app(self, app):
+        self.main_app = app
+
+    def startDrag(self, supportedActions):
+        self.drag_start_row = self.currentRow()
+        super().startDrag(supportedActions)
+
+    def dropEvent(self, event):
+        if not event or not self.main_app: return
+        
+        # 1. 权限检查：排序和筛选
+        header = self.horizontalHeader()
+        is_filtered = len(getattr(self, 'active_filters', [])) > 0
+        sort_col = header.sortIndicatorSection() if header else -1
+        sort_order = header.sortIndicatorOrder() if header else Qt.AscendingOrder
+        
+        if is_filtered:
+             DarkDialogHelper.show_warning(self, "操作限制", "筛选状态下禁止手动拖拽排序。\n请先清除筛选条件。")
+             event.ignore()
+             return
+
+        # 必须按ID列排序才能拖拽
+        if sort_col != 0:
+             DarkDialogHelper.show_warning(self, "操作限制", "请先按类别序号（第一列）排序后再进行拖拽操作。")
+             event.ignore()
+             return
+
+        # 获取源数据
+        source_row = self.drag_start_row
+        if source_row == -1: 
+            event.ignore()
+            return
+            
+        src_item = self.item(source_row, 0)
+        if not src_item: return
+        src_id = int(src_item.data(Qt.UserRole))
+
+        # 获取 drop 位置
+        target_index = self.indexAt(event.pos())
+        target_row = target_index.row()
+        drop_pos = self.dropIndicatorPosition()
+        
+        # 处理空白区域Drop
+        if target_row == -1:
+            if self.rowCount() > 0:
+                target_row = self.rowCount() - 1 
+            else:
+                target_row = 0
+
+        # --- 交换逻辑 (OnItem) ---
+        if drop_pos == QAbstractItemView.OnItem:
+             target_item = self.item(target_row, 0)
+             if target_item:
+                 tgt_id = int(target_item.data(Qt.UserRole))
+                 if DarkDialogHelper.ask_yes_no(self, "交换类别序号", f"确定交换 类别序号 {src_id} 和 {tgt_id} 吗？\n这将影响所有相关联的标注。"):
+                     self.main_app.swap_class_ids(src_id, tgt_id)
+                     event.accept()
+             return
+
+        # --- 移动/插入逻辑 ---
+        # 1. 计算视觉插入位置 (Before Row Index)
+        visual_insert_pos = target_row
+        if drop_pos == QAbstractItemView.BelowItem:
+            visual_insert_pos += 1
+        elif drop_pos == QAbstractItemView.OnViewport:
+            visual_insert_pos = self.rowCount()
+            
+        # 2. 获取上下文 ID (上下邻居)
+        id_above_v = -1
+        id_below_v = -1
+        
+        # 上邻：视觉位置 - 1 的行
+        if visual_insert_pos > 0 and visual_insert_pos <= self.rowCount():
+            item_prev = self.item(visual_insert_pos - 1, 0)
+            if item_prev: id_above_v = int(item_prev.data(Qt.UserRole))
+
+        # 下邻：视觉位置 的行
+        if visual_insert_pos < self.rowCount():
+             item_next = self.item(visual_insert_pos, 0)
+             if item_next: id_below_v = int(item_next.data(Qt.UserRole))
+
+        # 3. 构造提示信息
+        msg = f"确定移动类别 ID {src_id} 到新位置吗？\n\n"
+        msg += f"上邻类别ID: {id_above_v if id_above_v != -1 else '(无/顶端)'}\n"
+        msg += f"下邻类别ID: {id_below_v if id_below_v != -1 else '(无/底端)'}"
+        
+        if not DarkDialogHelper.ask_yes_no(self, "移动确认", msg):
+            event.ignore()
+            return
+            
+        # 4. 计算逻辑插入位置 (Logical Index)
+        # 如果是升序：Visual Index == Logical Index
+        # 如果是降序：List [0, 1, 2]. Visual [2, 1, 0].
+        #   Insert Before Visual 0 (Value 2) -> Insert Before Logical 2 -> Logical Index 2?
+        #   Insert Before Visual 2 (Value 0) -> Insert Before Logical 0 -> Logical Index 0?
+        #   Inverse Relationship: logical_idx = visual_idx ? 
+        #   No. Visual Row k corresponds to Logical Row (N-1-k).
+        #   We want to insert BEFORE Visual Row k.
+        #   Means in visual list: [..., k-1, NEW, k, ...]
+        #   In logical list (reversed): [..., k, NEW, k-1, ...] (Order reversed?)
+        #   Logic: 
+        #   Asc:  0, 1, 2. Insert at 1 -> 0, NEW, 1, 2. (Visual 0, NEW, 1, 2)
+        #   Desc: 2, 1, 0. Insert at 1 (Before 1). -> 2, NEW, 1, 0.
+        #   Logical Result: 0, 1, NEW, 2.
+        #   Wait, if Visual 2, NEW, 1, 0. The list is [2, NEW, 1, 0] ? 
+        #   So Logical is [0, 1, NEW, 2].
+        #   Original Visual Index of '1' was 1. (Row 1).
+        #   Original Logical Index of '1' was 1. (Length 3. 3-1-1 = 1).
+        #   So target logical is... N - visual_pos?
+        #   Let's verify: Length 3.
+        #   Insert at Visual 0 (Top). Before '2' (Logical 2). 
+        #   New List should be [NEW, 2, 1, 0] (Visual) -> [0, 1, 2, NEW] (Logical).
+        #   Visual Pos 0 -> Logical Pos 3 (End). (Length 3).
+        #   Insert at Visual 3 (Bottom). After '0' (Logical 0).
+        #   New List [2, 1, 0, NEW] (Visual) -> [NEW, 0, 1, 2] (Logical).
+        #   Visual Pos 3 -> Logical Pos 0.
+        #   Formula: Logical = N - Visual.
+        
+        count = self.rowCount()
+        logical_to_idx = visual_insert_pos
+        
+        if sort_order == Qt.DescendingOrder:
+            logical_to_idx = count - visual_insert_pos
+        
+        # 5. 执行移动
+        self.main_app.move_class_id(src_id, logical_to_idx)
+        event.accept()
+
+# ============================================
+# 标注画布控件 (保持不变)
+# ============================================
+
+class AnnotationCanvas(QWidget):
+    # 状态枚举
+    STATE_IDLE = 0
+    STATE_DRAWING = 1
+    STATE_MOVING = 2
+    STATE_RESIZING = 3
+    STATE_PANNING = 4
+
+    # 手柄常量
+    HANDLE_SIZE = 10
+    HANDLE_TOP_LEFT = 1
+    HANDLE_TOP_RIGHT = 2
+    HANDLE_BOTTOM_LEFT = 3
+    HANDLE_BOTTOM_RIGHT = 4
+    HANDLE_TOP = 5
+    HANDLE_BOTTOM = 6
+    HANDLE_LEFT = 7
+    HANDLE_RIGHT = 8
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.main_tab: 'AnnotationApp' = parent # type: ignore
+        self._pixmap = None
+        self._shapes = []
+        self._current_rect = None
+        self._start_pos = None
+        self._scale = 1.0
+        self._pan_x = 0
+        self._pan_y = 0
+        self._state = self.STATE_IDLE
+        self._last_mouse_pos = None
+        self.selected_shape_index = -1
+        self._active_handle = None
+        self._drag_start_rect = None 
+        self.setMouseTracking(True)
+        self.setFocusPolicy(Qt.StrongFocus) # type: ignore
+
+    def set_pixmap(self, pixmap):
+        self._pixmap = pixmap
+        self._shapes = []
+        self._current_rect = None
+        self._scale = 1.0
+        self._pan_x = 0
+        self._pan_y = 0
+        self.selected_shape_index = -1
+        self.update()
+
+    def set_shapes(self, shapes):
+        self._shapes = shapes
+        self.update()
+
+    def get_shapes(self):
+        return self._shapes
+
+    def get_img_dims(self):
+        if not self._pixmap: return 0, 0
+        return int(self._pixmap.width() * self._scale), int(self._pixmap.height() * self._scale)
+
+    def map_to_screen(self, rect_norm):
+        img_w, img_h = self.get_img_dims()
+        if img_w == 0 or not self._pixmap: return QRectF()
+        
+        win_w, win_h = self.width(), self.height()
+        base_scale = min(win_w / self._pixmap.width(), win_h / self._pixmap.height()) if self._pixmap.width() > 0 else 1.0
+        final_scale = base_scale * self._scale
+        
+        disp_w = int(self._pixmap.width() * final_scale)
+        disp_h = int(self._pixmap.height() * final_scale)
+        
+        off_x = (win_w - disp_w) // 2 + self._pan_x
+        off_y = (win_h - disp_h) // 2 + self._pan_y
+        
+        x = rect_norm.x() * disp_w + off_x
+        y = rect_norm.y() * disp_h + off_y
+        w = rect_norm.width() * disp_w
+        h = rect_norm.height() * disp_h
+        return QRectF(x, y, w, h)
+
+    def map_from_screen(self, point):
+        win_w, win_h = self.width(), self.height()
+        if not self._pixmap: return 0.0, 0.0
+        base_scale = min(win_w / self._pixmap.width(), win_h / self._pixmap.height())
+        final_scale = base_scale * self._scale
+        disp_w = int(self._pixmap.width() * final_scale)
+        disp_h = int(self._pixmap.height() * final_scale)
+        off_x = (win_w - disp_w) // 2 + self._pan_x
+        off_y = (win_h - disp_h) // 2 + self._pan_y
+        
+        nx = (point.x() - off_x) / disp_w
+        ny = (point.y() - off_y) / disp_h
+        return nx, ny
+        
+    def limit_to_image_bounds(self, nx, ny):
+        return max(0.0, min(1.0, nx)), max(0.0, min(1.0, ny))
+
+    def get_handle_at(self, pos, rect_screen):
+        hs = self.HANDLE_SIZE
+        x, y, w, h = rect_screen.x(), rect_screen.y(), rect_screen.width(), rect_screen.height()
+        
+        if QRectF(x - hs/2, y - hs/2, hs, hs).contains(pos): return self.HANDLE_TOP_LEFT
+        if QRectF(x + w - hs/2, y - hs/2, hs, hs).contains(pos): return self.HANDLE_TOP_RIGHT
+        if QRectF(x - hs/2, y + h - hs/2, hs, hs).contains(pos): return self.HANDLE_BOTTOM_LEFT
+        if QRectF(x + w - hs/2, y + h - hs/2, hs, hs).contains(pos): return self.HANDLE_BOTTOM_RIGHT
+        
+        if QRectF(x + hs/2, y - hs/2, w - hs, hs).contains(pos): return self.HANDLE_TOP
+        if QRectF(x + hs/2, y + h - hs/2, w - hs, hs).contains(pos): return self.HANDLE_BOTTOM
+        if QRectF(x - hs/2, y + hs/2, hs, h - hs).contains(pos): return self.HANDLE_LEFT
+        if QRectF(x + w - hs/2, y + hs/2, hs, h - hs).contains(pos): return self.HANDLE_RIGHT
+        
+        return None
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        
+        if not self._pixmap:
+            painter.setPen(QColor(255, 255, 255))
+            painter.drawText(self.rect(), Qt.AlignCenter, "请加载图片文件夹并选择图片进行标注") # type: ignore
+            return
+
+        win_w, win_h = self.width(), self.height()
+        base_scale = min(win_w / self._pixmap.width(), win_h / self._pixmap.height()) if self._pixmap.width() > 0 else 1.0
+        final_scale = base_scale * self._scale
+        disp_w = int(self._pixmap.width() * final_scale)
+        disp_h = int(self._pixmap.height() * final_scale)
+        off_x = (win_w - disp_w) // 2 + self._pan_x
+        off_y = (win_h - disp_h) // 2 + self._pan_y
+        
+        target_rect = QRect(int(off_x), int(off_y), disp_w, disp_h)
+        painter.drawPixmap(target_rect, self._pixmap)
+        
+        for i, shape in enumerate(self._shapes):
+            rect_norm = shape['rect']
+            screen_rect = self.map_to_screen(rect_norm)
+            
+            cls_idx = shape['class_index']
+            color_tuple = self.main_tab.get_class_color(cls_idx)
+            color = QColor(*color_tuple)
+            
+            is_selected = (i == self.selected_shape_index)
+            pen_width = 3 if is_selected else 2
+            painter.setPen(QPen(color, pen_width))
+            painter.setBrush(QColor(color.red(), color.green(), color.blue(), 80 if is_selected else 0))
+            painter.drawRect(screen_rect)
+            
+            label_name = self.main_tab.get_class_name(cls_idx)
+            fm = painter.fontMetrics()
+            txt_w = fm.width(label_name) + 10
+            txt_h = fm.height() + 4
+            txt_bg_rect = QRectF(screen_rect.left(), screen_rect.top() - txt_h, txt_w, txt_h)
+            painter.fillRect(txt_bg_rect, color)
+            painter.setPen(QColor(255, 255, 255) if color.lightness() < 128 else QColor(0, 0, 0))
+            painter.drawText(txt_bg_rect, Qt.AlignCenter, label_name) # type: ignore
+            
+            if is_selected:
+                painter.setPen(QColor(0, 0, 255))
+                painter.setBrush(QColor(255, 255, 255))
+                hs = self.HANDLE_SIZE
+                sx, sy, sw, sh = screen_rect.x(), screen_rect.y(), screen_rect.width(), screen_rect.height()
+                handles = [
+                    QPoint(int(sx), int(sy)), QPoint(int(sx+sw), int(sy)), 
+                    QPoint(int(sx), int(sy+sh)), QPoint(int(sx+sw), int(sy+sh)),
+                    QPoint(int(sx+sw/2), int(sy)), QPoint(int(sx+sw/2), int(sy+sh)),
+                    QPoint(int(sx), int(sy+sh/2)), QPoint(int(sx+sw), int(sy+sh/2))
+                ]
+                for p in handles:
+                    painter.drawRect(int(p.x()-hs/2), int(p.y()-hs/2), hs, hs)
+
+        rect = self._current_rect
+        if rect is not None:
+            painter.setPen(QPen(QColor(255, 255, 255), 2, Qt.DashLine)) # type: ignore
+            painter.setBrush(Qt.NoBrush) # type: ignore
+            painter.drawRect(rect)
+
+    def mousePressEvent(self, event):
+        if not self._pixmap: return
+        pos = event.localPos() 
+        
+        if event.button() == Qt.RightButton: # type: ignore
+            hit_shape = self.get_shape_at(pos)
+            if hit_shape != -1:
+                self.selected_shape_index = hit_shape
+                self.update()
+                self.main_tab.show_annotation_context_menu(self.mapToGlobal(event.pos()), from_canvas=True)
+            else:
+                self._state = self.STATE_PANNING
+                self._last_mouse_pos = pos
+                self.setCursor(Qt.ClosedHandCursor) # type: ignore
+            return
+
+        if event.button() == Qt.LeftButton: # type: ignore
+            if self.selected_shape_index != -1:
+                rect_norm = self._shapes[self.selected_shape_index]['rect']
+                screen_rect = self.map_to_screen(rect_norm)
+                handle = self.get_handle_at(pos, screen_rect)
+                if handle:
+                    self._state = self.STATE_RESIZING
+                    self._active_handle = handle
+                    self._drag_start_rect = rect_norm 
+                    self._last_mouse_pos = pos
+                    return
+                
+                if screen_rect.contains(pos):
+                    self._state = self.STATE_MOVING
+                    self._drag_start_rect = rect_norm 
+                    self._last_mouse_pos = pos
+                    return
+
+            hit_shape = self.get_shape_at(pos)
+            if hit_shape != -1:
+                self.selected_shape_index = hit_shape
+                self.main_tab.highlight_annotation_in_list(hit_shape)
+                self.update()
+                self._state = self.STATE_MOVING
+                self._drag_start_rect = self._shapes[hit_shape]['rect']
+                self._last_mouse_pos = pos
+            else:
+                self.selected_shape_index = -1
+                self.main_tab.annotation_table.clearSelection()
+                self._state = self.STATE_DRAWING
+                
+                nx, ny = self.map_from_screen(pos)
+                if 0 <= nx <= 1 and 0 <= ny <= 1:
+                    self._start_pos = pos
+                    self._current_rect = QRectF(pos, pos)
+                    self.update()
+                else:
+                    nx, ny = self.limit_to_image_bounds(nx, ny)
+                    clamped_rect = self.map_to_screen(QRectF(nx, ny, 0, 0))
+                    self._start_pos = clamped_rect.topLeft()
+                    self._current_rect = QRectF(self._start_pos, self._start_pos)
+                    self.update()
+
+    def mouseMoveEvent(self, event):
+        pos = event.localPos()
+        
+        if self._state == self.STATE_PANNING:
+            delta = pos - self._last_mouse_pos
+            self._pan_x += delta.x()
+            self._pan_y += delta.y()
+            self._last_mouse_pos = pos
+            self.update()
+            
+        elif self._state == self.STATE_DRAWING:
+            if self._start_pos is not None:
+                nx, ny = self.map_from_screen(pos)
+                nx, ny = self.limit_to_image_bounds(nx, ny)
+                nx_s, ny_s = self.map_from_screen(self._start_pos)
+                nx_s, ny_s = self.limit_to_image_bounds(nx_s, ny_s) 
+                
+                rect_norm = QRectF(QPointF(nx_s, ny_s), QPointF(nx, ny)).normalized()
+                self._current_rect = self.map_to_screen(rect_norm)
+                self.update()
+                
+        elif self._state == self.STATE_MOVING:
+            if self.selected_shape_index != -1 and self._drag_start_rect:
+                nx1, ny1 = self.map_from_screen(self._last_mouse_pos)
+                nx2, ny2 = self.map_from_screen(pos)
+                dx = nx2 - nx1
+                dy = ny2 - ny1
+                
+                r = self._shapes[self.selected_shape_index]['rect']
+                new_r = r.translated(dx, dy)
+                
+                x, y, w, h = new_r.x(), new_r.y(), new_r.width(), new_r.height()
+                if x < 0: x = 0
+                if y < 0: y = 0
+                if x + w > 1: x = 1 - w
+                if y + h > 1: y = 1 - h
+                
+                self._shapes[self.selected_shape_index]['rect'] = QRectF(x, y, w, h)
+                self._last_mouse_pos = pos
+                self.update()
+                
+        elif self._state == self.STATE_RESIZING:
+            if self.selected_shape_index != -1 and self._drag_start_rect:
+                nx, ny = self.map_from_screen(pos)
+                nx, ny = self.limit_to_image_bounds(nx, ny)
+                
+                r = self._shapes[self.selected_shape_index]['rect']
+                l, t, r_edge, b = r.left(), r.top(), r.right(), r.bottom()
+                
+                if self._active_handle == self.HANDLE_TOP_LEFT: l, t = nx, ny
+                elif self._active_handle == self.HANDLE_TOP_RIGHT: r_edge, t = nx, ny
+                elif self._active_handle == self.HANDLE_BOTTOM_LEFT: l, b = nx, ny
+                elif self._active_handle == self.HANDLE_BOTTOM_RIGHT: r_edge, b = nx, ny
+                elif self._active_handle == self.HANDLE_TOP: t = ny
+                elif self._active_handle == self.HANDLE_BOTTOM: b = ny
+                elif self._active_handle == self.HANDLE_LEFT: l = nx
+                elif self._active_handle == self.HANDLE_RIGHT: r_edge = nx
+                
+                if l > r_edge: l, r_edge = r_edge, l
+                if t > b: t, b = b, t
+
+                new_rect = QRectF(QPointF(l, t), QPointF(r_edge, b))
+                self._shapes[self.selected_shape_index]['rect'] = new_rect
+                self.update()
+
+        else:
+            if self.selected_shape_index != -1:
+                r = self._shapes[self.selected_shape_index]['rect']
+                sr = self.map_to_screen(r)
+                handle = self.get_handle_at(pos, sr)
+                if handle in [self.HANDLE_TOP_LEFT, self.HANDLE_BOTTOM_RIGHT]: self.setCursor(Qt.SizeFDiagCursor) # type: ignore
+                elif handle in [self.HANDLE_TOP_RIGHT, self.HANDLE_BOTTOM_LEFT]: self.setCursor(Qt.SizeBDiagCursor) # type: ignore
+                elif handle in [self.HANDLE_TOP, self.HANDLE_BOTTOM]: self.setCursor(Qt.SizeVerCursor) # type: ignore
+                elif handle in [self.HANDLE_LEFT, self.HANDLE_RIGHT]: self.setCursor(Qt.SizeHorCursor) # type: ignore
+                elif sr.contains(pos): self.setCursor(Qt.SizeAllCursor) # type: ignore
+                else: self.setCursor(Qt.ArrowCursor) # type: ignore
+            else:
+                self.setCursor(Qt.ArrowCursor) # type: ignore
+
+    def mouseReleaseEvent(self, event):
+        if self._state == self.STATE_DRAWING:
+            rect = self._current_rect
+            if rect is not None and (rect.width() > 5 or rect.height() > 5):
+                nx_tl, ny_tl = self.map_from_screen(rect.topLeft())
+                nx_br, ny_br = self.map_from_screen(rect.bottomRight())
+                nx_tl, ny_tl = self.limit_to_image_bounds(nx_tl, ny_tl)
+                nx_br, ny_br = self.limit_to_image_bounds(nx_br, ny_br)
+                w = nx_br - nx_tl
+                h = ny_br - ny_tl
+                if w > 0 and h > 0:
+                    norm_rect = QRectF(nx_tl, ny_tl, w, h).normalized()
+                    self.main_tab.add_new_shape(norm_rect)
+            self._current_rect = None
+            
+        elif self._state in [self.STATE_MOVING, self.STATE_RESIZING]:
+            if self.selected_shape_index != -1:
+                r = self._shapes[self.selected_shape_index]['rect']
+                x, y, w, h = r.x(), r.y(), r.width(), r.height()
+                x = max(0.0, min(1.0-w, x))
+                y = max(0.0, min(1.0-h, y))
+                self._shapes[self.selected_shape_index]['rect'] = QRectF(x, y, w, h)
+                self._shapes[self.selected_shape_index]['updated_at'] = get_timestamp() # Update Time
+
+            self.main_tab.save_current_annotations(format_override=None) 
+            self.main_tab.refresh_annotation_table()
+        
+        self._state = self.STATE_IDLE
+        self.setCursor(Qt.ArrowCursor) # type: ignore
+        self.update()
+
+    def get_shape_at(self, pos):
+        for i in range(len(self._shapes)-1, -1, -1):
+            rect_norm = self._shapes[i]['rect']
+            screen_rect = self.map_to_screen(rect_norm)
+            if screen_rect.contains(pos):
+                return i
+        return -1
+
+    def wheelEvent(self, event):
+        if not self._pixmap: return
+        zoom_in = event.angleDelta().y() > 0
+        factor = 1.1 if zoom_in else 0.9
+        self._scale *= factor
+        self.update()
+
+# ============================================
+# 标注主界面
+# ============================================
+
+class AnnotationApp(QWidget):
+    FORMAT_YOLO_TXT = "YOLO (.txt)"
+    FORMAT_VOC_XML = "PASCAL VOC (.xml)"
+    FORMAT_COCO_JSON = "MS COCO (.json)"
+
+    def __init__(self):
+        super().__init__()
+        self.current_image_path = None
+        self.class_data = [] 
+        self.current_class_index = -1 
+        self.current_format = self.FORMAT_YOLO_TXT 
+        
+        # COCO Support Data
+        self.coco_data = {}
+        self.coco_file_name = "annotations.json" 
+        
+        self.init_ui()
+
+    def init_ui(self):
+        layout = QHBoxLayout()
+        layout.setContentsMargins(20, 20, 20, 20)
+        splitter = QSplitter(Qt.Horizontal) # type: ignore
+
+        # --- Left Panel ---
+        left_widget = QWidget()
+        left_layout = QVBoxLayout(left_widget)
+        left_layout.setContentsMargins(0, 0, 10, 0)
+        
+        # Format Selection Row
+        fmt_layout = QHBoxLayout()
+        fmt_layout.addWidget(QLabel("工作格式:"))
+        self.format_combo = ComboBoxWithArrow()
+        self.format_combo.addItems([self.FORMAT_YOLO_TXT, self.FORMAT_VOC_XML, self.FORMAT_COCO_JSON])
+        self.format_combo.currentTextChanged.connect(self.on_format_changed)
+        fmt_layout.addWidget(self.format_combo)
+        
+        btn_export = QPushButton("导出")
+        btn_export.clicked.connect(self.export_annotations_dialog)
+        fmt_layout.addWidget(btn_export)
+        left_layout.addLayout(fmt_layout)
+        left_layout.addSpacing(10)
+
+        # Image Dir
+        self.btn_open_dir = QPushButton(" 打开图片目录")
+        self.btn_open_dir.setIcon(QIcon(resource_path("assets/icon_browse.png")))
+        self.btn_open_dir.clicked.connect(self.open_directory)
+        left_layout.addWidget(self.btn_open_dir)
+        
+        self.img_dir_edit = QLineEdit()
+        self.img_dir_edit.setPlaceholderText("未选择图片目录")
+        self.img_dir_edit.setReadOnly(True)
+        left_layout.addWidget(self.img_dir_edit)
+
+        # Label Dir
+        left_layout.addSpacing(5)
+        btn_out_browse = QPushButton(" 选择标签目录")
+        btn_out_browse.setIcon(QIcon(resource_path("assets/icon_browse.png")))
+        btn_out_browse.clicked.connect(self.select_output_dir)
+        left_layout.addWidget(btn_out_browse)
+        
+        self.output_dir_edit = QLineEdit()
+        self.output_dir_edit.setPlaceholderText("保存位置 (默认与图片目录同级labels)")
+        self.output_dir_edit.setReadOnly(True)
+        left_layout.addWidget(self.output_dir_edit)
+
+        # --- Class Table ---
+        left_layout.addSpacing(10)
+        left_layout.addWidget(QLabel("类别列表 (支持右键/拖拽):"))
+        self.class_table = DraggableTableWidget()
+        self.class_table.main_app = self # type: ignore
+        self.class_table.setColumnCount(3)
+        self.class_table.setHorizontalHeaderLabels(["类别序号", "名称", "修改时间"])
+        # 自定义行高/间距以方便拖拽，增加 padding 模拟间隔
+        self.class_table.setStyleSheet("""
+            QTableWidget::item { 
+                padding-top: 8px; 
+                padding-bottom: 8px; 
+            }
+        """) 
+        
+        self.class_table.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
+        self.class_table.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
+
+        self.setup_table_interface(self.class_table, [
+            ("类别序号", FilterCondition.TYPE_NUMBER),
+            ("名称", FilterCondition.TYPE_TEXT),
+            ("修改时间", FilterCondition.TYPE_DATETIME)
+        ])
+        
+        self.class_table.setFixedHeight(150)
+        self.class_table.customContextMenuRequested.connect(self.show_class_context_menu)
+        self.class_table.itemClicked.connect(self.on_category_clicked)
+        self.class_table.set_main_app(self)
+        left_layout.addWidget(self.class_table)
+
+        # --- Annotation Table ---
+        left_layout.addWidget(QLabel("当前图片标注列表:"))
+        self.annotation_table = QTableWidget()
+        self.annotation_table.setColumnCount(4)
+        self.annotation_table.setHorizontalHeaderLabels(["序号", "类别序号", "名称", "修改时间"])
+        
+        self.annotation_table.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
+        self.annotation_table.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
+
+        self.setup_table_interface(self.annotation_table, [
+            ("序号", FilterCondition.TYPE_NUMBER),
+            ("类别序号", FilterCondition.TYPE_NUMBER),
+            ("名称", FilterCondition.TYPE_TEXT),
+            ("修改时间", FilterCondition.TYPE_DATETIME)
+        ])
+
+        self.annotation_table.setFixedHeight(120)
+        self.annotation_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.annotation_table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.annotation_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.annotation_table.customContextMenuRequested.connect(lambda pos: self.show_annotation_context_menu(self.annotation_table.mapToGlobal(pos), from_canvas=False))
+        self.annotation_table.itemClicked.connect(self.on_annotation_item_clicked)
+        left_layout.addWidget(self.annotation_table)
+
+        # --- File Table ---
+        lbl_file_list = QLabel("文件列表:")
+        self.file_table = QTableWidget()
+        self.file_table.setColumnCount(2)
+        self.file_table.setHorizontalHeaderLabels(["文件名", "修改时间"])
+        
+        self.file_table.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
+        self.file_table.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
+
+        self.setup_table_interface(self.file_table, [
+            ("文件名", FilterCondition.TYPE_TEXT),
+            ("修改时间", FilterCondition.TYPE_DATETIME)
+        ])
+
+        self.file_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.file_table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.file_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.file_table.itemClicked.connect(self.on_file_clicked)
+        
+        left_layout.addWidget(lbl_file_list)
+        left_layout.addWidget(self.file_table, 1) 
+        
+        # --- Right Panel ---
+        right_widget = QWidget()
+        right_layout = QVBoxLayout(right_widget)
+        right_layout.setContentsMargins(10, 0, 0, 0)
+        
+        nav_layout = QHBoxLayout()
+        self.lbl_current_file = QLabel("未选择文件")
+        self.lbl_current_file.setStyleSheet("font-weight: bold; color: #00aaff;")
+        btn_prev = QPushButton(" 上一张")
+        btn_prev.clicked.connect(lambda: self.change_image(-1))
+        btn_next = QPushButton(" 下一张")
+        btn_next.clicked.connect(lambda: self.change_image(1))
+        nav_layout.addWidget(QLabel("当前:"))
+        nav_layout.addWidget(self.lbl_current_file, 1)
+        nav_layout.addWidget(btn_prev)
+        nav_layout.addWidget(btn_next)
+        right_layout.addLayout(nav_layout)
+
+        self.canvas = AnnotationCanvas(self) 
+        self.canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        
+        canvas_container = QFrame()
+        canvas_container.setStyleSheet("background-color: transparent; border: 1px solid #444;")
+        
+        c_layout = QVBoxLayout(canvas_container)
+        c_layout.setContentsMargins(0,0,0,0)
+        c_layout.addWidget(self.canvas)
+        right_layout.addWidget(canvas_container)
+        
+        splitter.addWidget(left_widget)
+        splitter.addWidget(right_widget)
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 4)
+        layout.addWidget(splitter)
+        self.setLayout(layout)
+        
+        self.class_table.installEventFilter(self)
+        self.annotation_table.installEventFilter(self)
+        self.file_table.installEventFilter(self)
+
+    def setup_table_interface(self, table, col_definitions):
+        # 1. 设置自定义 header
+        header = CustomHeader(Qt.Horizontal, table) # type: ignore
+        table.setHorizontalHeader(header)
+        header.setSectionResizeMode(QHeaderView.Interactive)
+        header.setStretchLastSection(True)
+        table.setSortingEnabled(True)
+        table.setContextMenuPolicy(Qt.CustomContextMenu) # type: ignore
+        
+        # 2. 绑定 header 右键菜单
+        header.setContextMenuPolicy(Qt.CustomContextMenu) # type: ignore
+        header.customContextMenuRequested.connect(lambda pos: self.show_header_menu(pos, table, col_definitions))
+
+        # 3. 存储元数据到 Table 对象上
+        table.col_definitions = col_definitions # type: ignore
+        table.active_filters = [] # type: ignore
+
+    def show_header_menu(self, pos, table, col_definitions):
+        header = table.horizontalHeader()
+        menu = QMenu(header)
+        
+        action_filter = QAction("筛选设置", header)
+        action_filter.triggered.connect(lambda: self.open_filter_dialog(table, col_definitions))
+        menu.addAction(action_filter)
+        
+        # 如果有筛选，提供清除
+        if getattr(table, 'active_filters', []):
+            action_clear = QAction("取消筛选", header)
+            action_clear.triggered.connect(lambda: self.clear_table_filters(table))
+            menu.addAction(action_clear)
+            
+        menu.exec_(header.mapToGlobal(pos))
+
+    def open_filter_dialog(self, table, col_definitions):
+        current_fs = getattr(table, 'active_filters', [])
+        dlg = AdvancedFilterDialog(self, col_definitions, current_fs)
+        if dlg.exec_() == QDialog.Accepted:
+            new_filters = dlg.get_filters()
+            table.active_filters = new_filters # type: ignore
+            self.apply_table_filters(table)
+
+    def clear_table_filters(self, table):
+        table.active_filters = [] # type: ignore
+        self.apply_table_filters(table)
+
+    def apply_table_filters(self, table):
+        filters = getattr(table, 'active_filters', [])
+        
+        # 1. Update Header Visuals
+        header = table.horizontalHeader()
+        if isinstance(header, CustomHeader):
+            active_cols = set(f.col_idx for f in filters)
+            # Clear all
+            header.active_filters = active_cols
+            vp = header.viewport()
+            if vp: vp.update()
+
+        # 2. Iterate Rows and Hide/Show
+        row_count = table.rowCount()
+        for r in range(row_count):
+            should_show = True
+            
+            # Logic: All filters must pass (AND)
+            for f in filters:
+                item = table.item(r, f.col_idx)
+                if not item: 
+                    should_show = False
+                    break
+                
+                text = item.text()
+                
+                # Check based on type
+                if f.col_type == FilterCondition.TYPE_NUMBER:
+                    try:
+                        val_float = float(text)
+                        target_float = float(f.value)
+                        
+                        passed = True
+                        if f.operator == FilterCondition.OP_EQ: passed = abs(val_float - target_float) < 1e-6
+                        elif f.operator == FilterCondition.OP_NEQ: passed = abs(val_float - target_float) > 1e-6
+                        elif f.operator == FilterCondition.OP_GT: passed = val_float > target_float
+                        elif f.operator == FilterCondition.OP_LT: passed = val_float < target_float
+                        elif f.operator == FilterCondition.OP_GTE: passed = val_float >= target_float
+                        elif f.operator == FilterCondition.OP_LTE: passed = val_float <= target_float
+                        elif f.operator == FilterCondition.OP_CONTAINS: passed = f.value in text # String fallback
+                        elif f.operator == FilterCondition.OP_NOT_CONTAINS: passed = f.value not in text
+                        
+                        if not passed: should_show = False
+                    except:
+                        # Parse fail -> Hide? Or only hide if strict? 
+                        # Let's say if filter is number but data isn't, hide.
+                        should_show = False
+
+                elif f.col_type == FilterCondition.TYPE_DATETIME:
+                    # Try Parse
+                    # Default fmt: %Y-%m-%d %H:%M or %Y-%m-%d %H:%M:%S
+                    dt = None
+                    for fmt in ["%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d"]:
+                        try:
+                            dt = datetime.strptime(text, fmt)
+                            break
+                        except: pass
+                    
+                    if not dt:
+                        # Fallback to string match for Contains/Eq
+                        if f.operator == FilterCondition.OP_CONTAINS: should_show = f.value in text
+                        elif f.operator == FilterCondition.OP_NOT_CONTAINS: should_show = f.value not in text
+                        elif f.operator == FilterCondition.OP_EQ: should_show = text == f.value
+                        elif f.operator == FilterCondition.OP_NEQ: should_show = text != f.value
+                        else: should_show = False # > < need parsing
+                    else:
+                        # Dimensions
+                        check_val = dt
+                        target_val = None
+                        
+                        # Prepare comparison values based on Dimension
+                        try:
+                            if f.dt_dim == FilterCondition.DT_YEAR: 
+                                check_val = dt.year; target_val = int(f.value)
+                            elif f.dt_dim == FilterCondition.DT_MONTH: 
+                                check_val = dt.month; target_val = int(f.value)
+                            elif f.dt_dim == FilterCondition.DT_DAY: 
+                                check_val = dt.day; target_val = int(f.value)
+                            elif f.dt_dim == FilterCondition.DT_HOUR: 
+                                check_val = dt.hour; target_val = int(f.value)
+                            elif f.dt_dim == FilterCondition.DT_MINUTE: 
+                                check_val = dt.minute; target_val = int(f.value)
+                            elif f.dt_dim == FilterCondition.DT_SECOND: 
+                                check_val = dt.second; target_val = int(f.value)
+                            else:
+                                # Full datetime comparison? Or just string match if dim not selected
+                                # Logic: If no DIM selected, try to parse target as DT and compare
+                                pass
+                        except:
+                            should_show = False # Parse target value failed
+                        
+                        if target_val is not None:
+                            # Compare numbers
+                            if f.operator == FilterCondition.OP_EQ: should_show = check_val == target_val
+                            elif f.operator == FilterCondition.OP_NEQ: should_show = check_val != target_val
+                            elif f.operator == FilterCondition.OP_GT: should_show = check_val > target_val # type: ignore
+                            elif f.operator == FilterCondition.OP_LT: should_show = check_val < target_val # type: ignore
+                            elif f.operator == FilterCondition.OP_GTE: should_show = check_val >= target_val # type: ignore
+                            elif f.operator == FilterCondition.OP_LTE: should_show = check_val <= target_val # type: ignore
+                            # Contains not relevant for numbers
+                        elif f.dt_dim is None:
+                             # No dim specific, try string fallback or full parse
+                             pass
+
+                else: # Text
+                    if f.operator == FilterCondition.OP_EQ: should_show = text == f.value
+                    elif f.operator == FilterCondition.OP_NEQ: should_show = text != f.value
+                    elif f.operator == FilterCondition.OP_CONTAINS: should_show = f.value in text
+                    elif f.operator == FilterCondition.OP_NOT_CONTAINS: should_show = f.value not in text
+                
+                if not should_show: break
+            
+            table.setRowHidden(r, not should_show)
+
+
+    # ==========================
+    # Logic: Format & Export
+    # ==========================
+    
+    def on_format_changed(self, text):
+        prev_format = self.current_format
+        self.current_format = text
+        DarkDialogHelper.show_info(self, "格式变更", f"工作格式已切换为 {text}。\n注意：原有标注保留在原文件格式中，如需转换请使用【导出】功能。")
+        if self.current_image_path:
+             self.load_image(os.path.basename(self.current_image_path))
+
+    def export_annotations_dialog(self):
+        items = [self.FORMAT_YOLO_TXT, self.FORMAT_VOC_XML, self.FORMAT_COCO_JSON]
+        target_fmt, ok = QInputDialog.getItem(self, "导出标注", "选择目标导出格式:", items, 0, False)
+        if not ok or not target_fmt: return
+        
+        default_export_path = os.path.join(self.output_dir_edit.text() or "", "export")
+        export_dir = QFileDialog.getExistingDirectory(self, "选择导出目录", default_export_path)
+        if not export_dir: return
+        
+        count = 0
+        total = self.file_table.rowCount()
+        
+        try:
+            for row in range(total):
+                item = self.file_table.item(row, 0)
+                if not item: continue
+                filename = item.text()
+                shapes = self._load_shapes_headless(filename, self.current_format)
+                self._save_shapes_headless(shapes, filename, target_fmt, export_dir)
+                count += 1
+            DarkDialogHelper.show_info(self, "导出成功", f"成功导出 {count} 个文件的标注到:\n{export_dir}")
+        except Exception as e:
+             DarkDialogHelper.show_critical(self, "导出失败", str(e))
+
+    def _load_shapes_headless(self, filename, fmt):
+        shapes = []
+        if fmt == self.FORMAT_YOLO_TXT:
+             txt_name = os.path.splitext(filename)[0] + ".txt"
+             path = os.path.join(self.output_dir_edit.text(), txt_name)
+             if os.path.exists(path):
+                 with open(path, 'r', encoding='utf-8') as f:
+                     for line in f:
+                         parts = line.strip().split()
+                         if len(parts) >= 5:
+                             try:
+                                 cls_idx = int(parts[0])
+                                 cx, cy, w, h = map(float, parts[1:5])
+                                 x, y = cx - w/2, cy - h/2
+                                 shapes.append({'class_index': cls_idx, 'rect': QRectF(x, y, w, h)})
+                             except: pass
+        elif fmt == self.FORMAT_VOC_XML:
+             xml_name = os.path.splitext(filename)[0] + ".xml"
+             path = os.path.join(self.output_dir_edit.text(), xml_name)
+             if os.path.exists(path):
+                 try:
+                     tree = ET.parse(path)
+                     root = tree.getroot()
+                     size = root.find('size')
+                     width, height = 0.0, 0.0
+                     if size is not None:
+                         w_e = size.find('width')
+                         h_e = size.find('height')
+                         if w_e is not None and w_e.text is not None: width = float(w_e.text)
+                         if h_e is not None and h_e.text is not None: height = float(h_e.text)
+                     
+                     for obj in root.findall('object'):
+                         name_e = obj.find('name')
+                         name = name_e.text if (name_e is not None and name_e.text) else ""
+                         bndbox = obj.find('bndbox')
+                         if bndbox is not None:
+                             xmin_e = bndbox.find('xmin')
+                             ymin_e = bndbox.find('ymin')
+                             xmax_e = bndbox.find('xmax')
+                             ymax_e = bndbox.find('ymax')
+                             if (xmin_e is not None and xmin_e.text is not None and 
+                                 ymin_e is not None and ymin_e.text is not None and 
+                                 xmax_e is not None and xmax_e.text is not None and 
+                                 ymax_e is not None and ymax_e.text is not None):
+                                 xmin = float(xmin_e.text)
+                                 ymin = float(ymin_e.text)
+                                 xmax = float(xmax_e.text)
+                                 ymax = float(ymax_e.text)
+                                 cls_idx = -1
+                                 for i, c in enumerate(self.class_data):
+                                     if c['name'] == name: cls_idx = i; break
+                                 if cls_idx != -1 and width > 0:
+                                     x, y, w, h = xmin/width, ymin/height, (xmax-xmin)/width, (ymax-ymin)/height
+                                     shapes.append({'class_index': cls_idx, 'rect': QRectF(x, y, w, h)})
+                 except: pass
+        elif fmt == self.FORMAT_COCO_JSON:
+             if not self.coco_data: self._ensure_coco_loaded()
+             img_entry = next((i for i in self.coco_data.get('images', []) if i['file_name'] == filename), None)
+             if img_entry:
+                 img_id = img_entry['id']
+                 img_w, img_h = img_entry['width'], img_entry['height']
+                 anns = [a for a in self.coco_data.get('annotations', []) if a['image_id'] == img_id]
+                 cat_id_to_idx = {} 
+                 for i, c in enumerate(self.class_data):
+                     for coco_cat in self.coco_data.get('categories', []):
+                         if coco_cat['name'] == c['name']: cat_id_to_idx[coco_cat['id']] = i; break
+                 for a in anns:
+                     if a.get('category_id') in cat_id_to_idx:
+                         box = a.get('bbox', [0,0,0,0])
+                         shapes.append({'class_index': cat_id_to_idx[a['category_id']], 
+                                        'rect': QRectF(box[0]/img_w, box[1]/img_h, box[2]/img_w, box[3]/img_h)})
+        return shapes
+
+    def _save_shapes_headless(self, shapes, filename, fmt, out_dir):
+        if not os.path.exists(out_dir): os.makedirs(out_dir)
+        img_path = os.path.join(self.current_dir, filename)
+        img_w, img_h = 1000, 1000 
+        if os.path.exists(img_path):
+            pm = QPixmap(img_path)
+            if not pm.isNull(): img_w, img_h = pm.width(), pm.height()
+            
+        if fmt == self.FORMAT_YOLO_TXT:
+            txt_path = os.path.join(out_dir, os.path.splitext(filename)[0] + ".txt")
+            with open(txt_path, 'w', encoding='utf-8') as f:
+                for s in shapes:
+                    r = s['rect']
+                    cx, cy = r.x() + r.width()/2, r.y() + r.height()/2
+                    f.write(f"{s['class_index']} {cx:.6f} {cy:.6f} {r.width():.6f} {r.height():.6f}\n")
+                    
+        elif fmt == self.FORMAT_VOC_XML:
+            xml_path = os.path.join(out_dir, os.path.splitext(filename)[0] + ".xml")
+            root = ET.Element('annotation')
+            ET.SubElement(root, 'filename').text = filename
+            size = ET.SubElement(root, 'size')
+            ET.SubElement(size, 'width').text = str(img_w)
+            ET.SubElement(size, 'height').text = str(img_h)
+            for s in shapes:
+                r = s['rect']
+                obj = ET.SubElement(root, 'object')
+                ET.SubElement(obj, 'name').text = self.get_class_name(s['class_index'])
+                bndbox = ET.SubElement(obj, 'bndbox')
+                ET.SubElement(bndbox, 'xmin').text = str(int(r.x()*img_w))
+                ET.SubElement(bndbox, 'ymin').text = str(int(r.y()*img_h))
+                ET.SubElement(bndbox, 'xmax').text = str(int((r.x()+r.width())*img_w))
+                ET.SubElement(bndbox, 'ymax').text = str(int((r.y()+r.height())*img_h))
+            xmlstr = minidom.parseString(ET.tostring(root)).toprettyxml(indent="  ")
+            with open(xml_path, "w", encoding='utf-8') as f: f.write(xmlstr)
+
+        elif fmt == self.FORMAT_COCO_JSON:
+            json_path = os.path.join(out_dir, "export_coco.json")
+            if os.path.exists(json_path):
+                with open(json_path, 'r', encoding='utf-8') as f: data = json.load(f)
+            else:
+                data = {"images": [], "annotations": [], "categories": []}
+                for i, c in enumerate(self.class_data):
+                    data['categories'].append({"id": i+1, "name": c['name']})
+            img_id = len(data['images']) + 1 
+            data['images'].append({"id": img_id, "file_name": filename, "width": img_w, "height": img_h})
+            ann_id_start = len(data['annotations']) + 1
+            for i, s in enumerate(shapes):
+                name = self.get_class_name(s['class_index'])
+                cat_id = next((c['id'] for c in data['categories'] if c['name'] == name), 1)
+                r = s['rect']
+                x, y, w, h = r.x()*img_w, r.y()*img_h, r.width()*img_w, r.height()*img_h
+                data['annotations'].append({
+                    "id": ann_id_start + i,
+                    "image_id": img_id,
+                    "category_id": cat_id,
+                    "bbox": [x, y, w, h],
+                    "area": w*h,
+                    "iscrowd": 0
+                })
+            with open(json_path, 'w', encoding='utf-8') as f:
+                json.dump(data, f)
+
+
+    # ==========================
+    # Logic: Core
+    # ==========================
+
+    def open_directory(self):
+        dir_path = QFileDialog.getExistingDirectory(self, "选择图片目录")
+        if dir_path:
+            self.current_dir = dir_path
+            self.img_dir_edit.setText(dir_path) 
+            parent_dir = os.path.dirname(dir_path)
+            default_label_dir = os.path.join(parent_dir, "labels")
+            self.output_dir_edit.setText(default_label_dir)
+            if not os.path.exists(default_label_dir):
+                try: os.makedirs(default_label_dir)
+                except: pass
+            self.refresh_file_table()
+            self.load_classes()
+
+    def select_output_dir(self):
+        d = QFileDialog.getExistingDirectory(self, "选择标签目录", self.output_dir_edit.text())
+        if d: 
+            self.output_dir_edit.setText(d)
+            self.load_classes()
+
+    def refresh_file_table(self):
+        self.file_table.setSortingEnabled(False)
+        self.file_table.setRowCount(0)
+        exts = ('.jpg', '.jpeg', '.png', '.bmp')
+        if hasattr(self, 'current_dir'):
+            files = sorted([f for f in os.listdir(self.current_dir) if f.lower().endswith(exts)])
+            self.file_table.setRowCount(len(files))
+            for i, f in enumerate(files):
+                item_name = QTableWidgetItem(f)
+                self.file_table.setItem(i, 0, item_name)
+                
+                full_path = os.path.join(self.current_dir, f)
+                ts = datetime.fromtimestamp(os.path.getmtime(full_path)).strftime("%Y-%m-%d %H:%M")
+                item_time = QTableWidgetItem(ts)
+                self.file_table.setItem(i, 1, item_time)
+        
+        self.apply_table_filters(self.file_table) # Re-apply filters
+        self.file_table.setSortingEnabled(True)
+
+    def load_classes(self):
+        self.class_data = []
+        self.class_table.setRowCount(0)
+        out_dir = self.output_dir_edit.text()
+        json_path = os.path.join(out_dir, "classes.json")
+        txt_path = os.path.join(out_dir, "classes.txt")
+        
+        if os.path.exists(json_path):
+            try:
+                with open(json_path, 'r', encoding='utf-8') as f: 
+                    data = json.load(f)
+                    # Support New Structure (Dict) vs Old Structure (List)
+                    if isinstance(data, dict):
+                        self.class_data = data.get('categories', [])
+                        # We can load info if needed, but for now ignoring
+                    elif isinstance(data, list):
+                        self.class_data = data
+            except: pass
+            
+        elif os.path.exists(txt_path):
+            with open(txt_path, 'r', encoding='utf-8') as f:
+                names = [l.strip() for l in f.readlines() if l.strip()]
+                for n in names:
+                    self.class_data.append({
+                        "id": len(self.class_data),
+                        "name": n, 
+                        "color": [random.randint(50,255) for _ in range(3)], 
+                        "updated_at": get_timestamp()
+                    })
+            self.save_classes_json()
+        
+        # Enforce ID consistency and missing attributes
+        for i, c in enumerate(self.class_data):
+            # ID sync with list index
+            c['id'] = i 
+            
+            # Ensure name exists
+            if 'name' not in c:
+                c['name'] = f"Class_{i}"
+
+            # Ensure color exists
+            if 'color' not in c or not isinstance(c['color'], list) or len(c['color']) != 3:
+                c['color'] = [random.randint(50, 255) for _ in range(3)]
+                
+            # Ensure timestamp
+            if 'updated_at' not in c: 
+                c['updated_at'] = get_timestamp()
+            
+        self.refresh_class_table()
+
+    def save_classes_json(self):
+        out_dir = self.output_dir_edit.text()
+        if not out_dir: return
+        if not os.path.exists(out_dir): os.makedirs(out_dir)
+        
+        # Enforce IDs before saving
+        for i, c in enumerate(self.class_data):
+            c['id'] = i
+            
+        # New Structure
+        output_data = {
+            "info": {
+                "year": datetime.now().year,
+                "version": APP_VERSION,
+                "contributor": APP_NAME
+            },
+            "categories": self.class_data
+        }
+        
+        with open(os.path.join(out_dir, "classes.json"), 'w', encoding='utf-8') as f:
+            json.dump(output_data, f, indent=2, ensure_ascii=False)
+            
+        with open(os.path.join(out_dir, "classes.txt"), 'w', encoding='utf-8') as f:
+            for cls in self.class_data:
+                f.write(f"{cls['name']}\n")
+
+    def refresh_class_table(self):
+        # Disable sorting to populate table in strict List Order (0..N)
+        self.class_table.setSortingEnabled(False)
+        self.class_table.model().layoutAboutToBeChanged.emit() # Notify model about changes
+        
+        self.class_table.clearContents()
+        # Explicitly reset row count to 0 to ensure all row states (hidden, height) are reset
+        self.class_table.setRowCount(0)
+        self.class_table.setRowCount(len(self.class_data))
+        
+        for i, cls in enumerate(self.class_data):
+            # Column 0: ID (Color is in Delegate, not background role)
+            item_id = QTableWidgetItem(str(i))
+            item_id.setTextAlignment(Qt.AlignCenter) # type: ignore
+            # Crucial: Store Real Index in UserRole for accurate lookups
+            item_id.setData(Qt.UserRole, i) 
+            
+            # Text color logic for ID
+            c = cls['color']
+            # We use a delegate for rendering the ID cell background, 
+            # but we set the text foreground here for contrast
+            # Calculate luminance
+            lum = c[0]*0.299 + c[1]*0.587 + c[2]*0.114
+            if lum < 128: item_id.setForeground(QColor(255, 255, 255))
+            else: item_id.setForeground(QColor(0, 0, 0))
+            
+            # Store Color in UserRole for the Delegate to access!
+            # Using UserRole+1 for Color
+            item_id.setData(Qt.UserRole + 1, QColor(*c))
+
+            # Column 1: Name
+            item_name = QTableWidgetItem(cls['name'])
+            # Name column use default style (clear explicit colors)
+            item_name.setBackground(QBrush()) # Clear background
+            item_name.setForeground(QBrush()) # Clear foreground (use QSS default)
+
+            self.class_table.setItem(i, 0, item_id)
+            self.class_table.setItem(i, 1, item_name)
+            self.class_table.setItem(i, 2, QTableWidgetItem(cls.get('updated_at', '')))
+            
+            # Ensure row is shown
+            self.class_table.setRowHidden(i, False)
+
+        if self.current_class_index != -1 and self.current_class_index < self.class_table.rowCount():
+            # Select the row corresponding to current_class_index
+            # Warning: If sorted, Row != Index. 
+            # We need to find the row with UserRole == current_index.
+            # But here sorting is Disabled, so Row == Index.
+            self.class_table.selectRow(self.current_class_index)
+        
+        self.apply_table_filters(self.class_table)
+        self.class_table.model().layoutChanged.emit() # Notify model layout changed
+        self.class_table.setSortingEnabled(True)
+
+    def show_class_context_menu(self, pos):
+        menu = QMenu()
+        item = self.class_table.itemAt(pos)
+        
+        # 获取真实 Index
+        idx = -1
+        if item:
+            item_id_cell = self.class_table.item(item.row(), 0)
+            idx = item_id_cell.data(Qt.UserRole) if item_id_cell else -1 
+        
+        add_action = QAction("新建类别", self)
+        # 修改点：直接调用 add_new_class_dialog
+        add_action.triggered.connect(self.add_new_class_dialog) 
+        menu.addAction(add_action)
+        
+        if idx != -1:
+            menu.addSeparator()
+            edit_action = QAction("修改名称", self)
+            edit_action.triggered.connect(lambda: self.edit_class_name(idx))
+            menu.addAction(edit_action)
+            
+            color_action = QAction("修改颜色", self)
+            color_action.triggered.connect(lambda: self.edit_class_color(idx))
+            menu.addAction(color_action)
+            
+            id_action = QAction("修改类别序号", self)
+            id_action.triggered.connect(lambda: self.edit_class_id(idx))
+            menu.addAction(id_action)
+            
+            del_action = QAction("删除类别", self)
+            del_action.triggered.connect(lambda: self.delete_class(idx))
+            menu.addAction(del_action)
+            
+        menu.exec_(self.class_table.mapToGlobal(pos))
+
+    # ==========================
+    # Logic: Class ID Management
+    # ==========================
+    
+    def edit_class_id(self, old_idx):
+        new_id, ok = DarkDialogHelper.get_int(self, "修改类别序号", "输入新序号:", old_idx, 0, 999)
+        if ok and new_id != old_idx:
+            # 限制范围
+            if new_id >= len(self.class_data): new_id = len(self.class_data) - 1
+            if new_id < 0: new_id = 0
+            
+            # 如果目标ID已存在（且不是追加到末尾），询问策略
+            if new_id < len(self.class_data):
+                reply = DarkDialogHelper.ask_yes_no_cancel(self, "类别序号冲突", 
+                    f"类别序号 {new_id} 已存在 ({self.class_data[new_id]['name']})。\n"
+                    "选择【是】替换(交换)位置，选择【否】插入到该位置，【取消】放弃。")
+                
+                if reply == QMessageBox.Yes:
+                    self.swap_class_ids(old_idx, new_id)
+                elif reply == QMessageBox.No:
+                    self.move_class_id(old_idx, new_id)
+            else:
+                self.move_class_id(old_idx, new_id)
+
+    def _recursive_shift(self, current_idx, target_match_id, n_limit):
+        """ 使用有限递归逻辑进行属性移动 """
+        # 递归终止条件
+        if current_idx >= n_limit:
+            return n_limit
+            
+        current_id = -1
+        if current_idx < len(self.class_data):
+            current_id = self.class_data[current_idx].get('id', -1)
+            
+        # 找到目标 ID 或到达边界停止
+        if current_id == target_match_id or current_idx == n_limit - 1:
+            return current_idx
+
+        # 向下递归
+        stop_idx = self._recursive_shift(current_idx + 1, target_match_id, n_limit)
+        
+        # 回溯阶段：将属性从 Current 复制到 Current+1 (Shift Right)
+        if current_idx + 1 < len(self.class_data):
+            self.class_data[current_idx + 1] = self.class_data[current_idx]
+            
+        return stop_idx
+
+    def swap_class_ids(self, idx1, idx2):
+        if idx1 == idx2: return
+        remap = {idx1: idx2, idx2: idx1}
+        
+        # 在 classes.json 中交换名称、颜色等所有非ID属性
+        item1 = self.class_data[idx1]
+        item2 = self.class_data[idx2]
+        
+        attrs1 = {k: v for k, v in item1.items() if k != 'id'}
+        attrs2 = {k: v for k, v in item2.items() if k != 'id'}
+        
+        item1.update(attrs2)
+        item2.update(attrs1)
+        
+        # ID 保持与索引一致
+        item1['id'] = idx1
+        item2['id'] = idx2
+        item1['updated_at'] = get_timestamp()
+        item2['updated_at'] = get_timestamp()
+        
+        self._apply_id_remapping(remap)
+        self.save_classes_json()
+        self.load_classes() 
+        self.refresh_annotation_table()
+        self.canvas.update()
+
+    def move_class_id(self, from_idx, to_idx):
+        """ 
+        插入类别序号逻辑使用有限递归
+        """
+        if from_idx == to_idx: return
+        n = len(self.class_data)
+        if not (0 <= from_idx < n): return
+        
+        # 1. 获取插入元属性
+        insert_item = self.class_data[from_idx]
+        insert_id = insert_item['id']
+        temp_attrs = {k: v for k, v in insert_item.items()} 
+
+        # 2. 确定递归起始点 (插入位置的较大ID)
+        start_idx = to_idx
+        if start_idx < 0: start_idx = 0
+        
+        if from_idx < to_idx:
+            # 向下移动 (e.g. 0 -> 2)
+            # 扩展列表以允许移位
+            self.class_data.append({}) 
+            # 递归移位: 目标区域没有 insert_id，会直到末尾停止
+            self._recursive_shift(start_idx, insert_id, len(self.class_data))
+            
+            # 插入并删除原位置
+            self.class_data[start_idx] = temp_attrs
+            del self.class_data[from_idx]
+            
+        else:
+            # 向上移动 (e.g. 4 -> 2)
+            # 递归移位: 会在 from_idx (insert_id) 处停止
+            self._recursive_shift(start_idx, insert_id, n)
+            
+            # 插入 (原位置已被覆盖)
+            self.class_data[start_idx] = temp_attrs
+
+        # 3. 检查连贯性并重新进行ID复制 (从0开始)
+        # 生成 ID 映射表用于更新文件
+        new_map = {}
+        for i, item in enumerate(self.class_data):
+            old_id = item.get('id', -1)
+            if old_id != -1 and old_id != i:
+                new_map[old_id] = i
+            item['id'] = i
+            item['updated_at'] = get_timestamp()
+
+        # 更新 classes.txt 和 classes.json 由 save_classes_json 处理
+        # 更新标注文件中的 ID
+        self._apply_id_remapping(new_map)
+
+        # 4. 刷新列表显示
+        self.save_classes_json() 
+        self.load_classes() 
+        self.refresh_annotation_table()
+        self.canvas.update()
+
+    def _apply_id_remapping(self, remap_dict):
+        """ 辅助函数：将 remap_dict 应用于当前画布上的所有形状 """
+        if not remap_dict: return
+        shapes = self.canvas.get_shapes()
+        changed = False
+        for s in shapes:
+            old_c = s['class_index']
+            if old_c in remap_dict:
+                s['class_index'] = remap_dict[old_c]
+                changed = True
+        
+        # 如果有变化，保存当前图片的标注文件
+        if changed:
+            self.save_current_annotations()
+    # ==========================
+    # Logic: Class CRUD
+    # ==========================
+
+    def add_new_class_dialog(self):
+        existing_names = [c['name'] for c in self.class_data]
+        name, ok = DarkDialogHelper.get_item(self, "选择/新建类别", "类别名称:", existing_names, 0, editable=True)
+        if ok and name:
+            name = name.strip()
+            if not name: return -1
+            for i, cls in enumerate(self.class_data):
+                if cls['name'] == name:
+                    return i
+            color = DarkDialogHelper.get_color(self)
+            if color.isValid():
+                self.class_data.append({"id": len(self.class_data),
+                                        "name": name, 
+                                        "color": [color.red(), color.green(), color.blue()],
+                                        "updated_at": get_timestamp()})
+                self.save_classes_json()
+                self.refresh_class_table()
+                return len(self.class_data) - 1 
+        return -1
+
+    def edit_class_name(self, idx):
+        old_name = self.class_data[idx]['name']
+        name, ok = DarkDialogHelper.get_text(self, "修改名称", "新名称:", text=old_name)
+        if ok and name:
+            self.class_data[idx]['name'] = name
+            self.class_data[idx]['updated_at'] = get_timestamp()
+            self.save_classes_json()
+            self.refresh_class_table()
+            self.canvas.update()
+            self.refresh_annotation_table()
+
+    def edit_class_color(self, idx):
+        old_c = self.class_data[idx]['color']
+        color = DarkDialogHelper.get_color(self, initial=QColor(*old_c))
+        if color.isValid():
+            self.class_data[idx]['color'] = [color.red(), color.green(), color.blue()]
+            self.class_data[idx]['updated_at'] = get_timestamp()
+            self.save_classes_json()
+            self.refresh_class_table()
+            self.canvas.update()
+
+    def delete_class(self, idx):
+        if DarkDialogHelper.ask_yes_no(self, "确认删除", "删除此类别可能影响现有标注，确定吗？"):
+            self.class_data.pop(idx)
+            self.save_classes_json()
+            self.refresh_class_table()
+            self.current_class_index = -1
+
+    def save_classes_json(self):
+        out_dir = self.output_dir_edit.text()
+        if not out_dir: return
+        if not os.path.exists(out_dir): os.makedirs(out_dir)
+        with open(os.path.join(out_dir, "classes.json"), 'w', encoding='utf-8') as f:
+            json.dump(self.class_data, f, indent=2, ensure_ascii=False)
+        with open(os.path.join(out_dir, "classes.txt"), 'w', encoding='utf-8') as f:
+            for cls in self.class_data:
+                f.write(f"{cls['name']}\n")
+
+    def on_category_clicked(self, item):
+        # 即使排序或筛选，item也是UI单元格。
+        # 我们必须获取该行对应的真实 Class Index (Data Index)。
+        # 通过在 refresh_class_table 中设置的数据获取。
+        row = item.row()
+        item_id_cell = self.class_table.item(row, 0)
+        idx = item_id_cell.data(Qt.UserRole) if item_id_cell else -1 # type: ignore
+        
+        if idx == -1: return
+
+        if idx == self.current_class_index:
+            self.current_class_index = -1
+            self.class_table.clearSelection()
+        else:
+            self.current_class_index = idx
+
+    # ==========================
+    # Logic: Annotation & Files
+    # ==========================
+
+    def on_file_clicked(self, item):
+        if not item: return
+        row = item.row()
+        name_item = self.file_table.item(row, 0)
+        if name_item:
+            filename = name_item.text()
+            self.load_image(filename)
+
+    def change_image(self, delta):
+        # 注意: 过滤后行数减少，逻辑需要支持
+        count = self.file_table.rowCount()
+        # count 只包含筛选后显示的行吗? 不是，rowCount是所有行，只是部分隐藏
+        # 所以我们需要找到 visible rows
+        
+        visible_rows = [r for r in range(count) if not self.file_table.isRowHidden(r)]
+        if not visible_rows: return
+        
+        curr_items = self.file_table.selectedItems()
+        curr_row = curr_items[0].row() if curr_items else -1
+        
+        # Find index in visible list
+        try:
+            current_vis_idx = visible_rows.index(curr_row)
+        except ValueError:
+            current_vis_idx = -1
+            
+        if current_vis_idx == -1 and visible_rows:
+            next_vis_idx = 0
+        else:
+            next_vis_idx = current_vis_idx + delta
+            
+        if 0 <= next_vis_idx < len(visible_rows):
+            next_row = visible_rows[next_vis_idx]
+            self.file_table.selectRow(next_row)
+            name_item = self.file_table.item(next_row, 0)
+            if name_item:
+                filename = name_item.text()
+                self.load_image(filename)
+        else:
+            DarkDialogHelper.show_info(self, "提示", "已经是第一张或最后一张了。")
+
+    def load_image(self, filename):
+        if not self.current_dir: return
+        self.current_image_path = os.path.join(self.current_dir, filename)
+        self.lbl_current_file.setText(filename)
+        pixmap = QPixmap(self.current_image_path)
+        self.canvas.set_pixmap(pixmap)
+        self.load_current_annotations(filename)
+        self.refresh_annotation_table()
+
+    def load_current_annotations(self, filename):
+        if not filename: 
+            self.canvas.set_shapes([])
+            return
+        shapes = self._load_shapes_headless(filename, self.current_format)
+        self.canvas.set_shapes(shapes)
+
+    def add_new_shape(self, rect_normalized):
+        cls_idx = self.current_class_index
+        if cls_idx == -1:
+            new_idx = self.add_new_class_dialog()
+            if new_idx != -1:
+                cls_idx = new_idx
+                self.current_class_index = new_idx
+                self.class_table.selectRow(new_idx)
+            else:
+                return 
+
+        self.canvas._shapes.append({'class_index': cls_idx, 'rect': rect_normalized, 'updated_at': get_timestamp()})
+        self.save_current_annotations()
+        self.refresh_annotation_table()
+        self.canvas.update()
+
+    def remove_shape(self, index):
+        if 0 <= index < len(self.canvas._shapes):
+            self.canvas._shapes.pop(index)
+            self.save_current_annotations()
+            self.refresh_annotation_table()
+            self.canvas.selected_shape_index = -1
+            self.canvas.update()
+
+    def save_current_annotations(self, format_override=None):
+        if not self.current_image_path: return
+        fmt = format_override or self.current_format
+        self._save_shapes_headless(self.canvas.get_shapes(), os.path.basename(self.current_image_path), fmt, self.output_dir_edit.text())
+
+    def refresh_annotation_table(self):
+        self.annotation_table.setSortingEnabled(False)
+        self.annotation_table.setRowCount(len(self.canvas.get_shapes()))
+        
+        for i, shape in enumerate(self.canvas.get_shapes()):
+            cls_idx = shape['class_index']
+            self.annotation_table.setItem(i, 0, QTableWidgetItem(str(i)))
+            self.annotation_table.setItem(i, 1, QTableWidgetItem(str(cls_idx)))
+            name = self.get_class_name(cls_idx)
+            self.annotation_table.setItem(i, 2, QTableWidgetItem(name))
+            time_str = shape.get('updated_at', 'None')
+            self.annotation_table.setItem(i, 3, QTableWidgetItem(time_str))
+
+        self.apply_table_filters(self.annotation_table)
+        self.annotation_table.setSortingEnabled(True)
+
+    def on_annotation_item_clicked(self, item):
+        idx = item.row()
+        id_item = self.annotation_table.item(idx, 0)
+        if id_item:
+             real_idx = int(id_item.text())
+             self.canvas.selected_shape_index = real_idx
+             self.canvas.update()
+
+    def show_annotation_context_menu(self, pos, from_canvas=False):
+        menu = QMenu()
+        idx = -1
+        if from_canvas:
+            idx = self.canvas.selected_shape_index
+        else:
+            item = self.annotation_table.itemAt(self.annotation_table.mapFromGlobal(pos))
+            if item:
+                row = item.row()
+                id_item = self.annotation_table.item(row, 0)
+                if id_item:
+                    idx = int(id_item.text())
+        
+        if idx != -1:
+            del_action = QAction("删除标注", self)
+            del_action.triggered.connect(lambda: self.remove_shape(idx))
+            menu.addAction(del_action)
+            change_action = QAction("修改类别", self)
+            change_action.triggered.connect(lambda: self.change_shape_class(idx))
+            menu.addAction(change_action)
+            menu.exec_(pos)
+
+    def change_shape_class(self, idx):
+        existing_names = [c['name'] for c in self.class_data]
+        name, ok = DarkDialogHelper.get_item(self, "修改类别", "选择或输入新类别:", existing_names, 0, editable=True)
+        
+        if ok and name:
+            name = name.strip()
+            if not name: return
+
+            new_cls_idx = -1
+            for i, cls in enumerate(self.class_data):
+                if cls['name'] == name:
+                    new_cls_idx = i
+                    break
+            
+            if new_cls_idx == -1:
+                color = DarkDialogHelper.get_color(self)
+                if color.isValid():
+                    self.class_data.append({"id": len(self.class_data),
+                                            "name": name, 
+                                            "color": [color.red(), color.green(), color.blue()],
+                                            "updated_at": get_timestamp()})
+                    self.save_classes_json()
+                    self.refresh_class_table()
+                    new_cls_idx = len(self.class_data) - 1
+                else: return 
+
+            if new_cls_idx != -1:
+                self.canvas._shapes[idx]['class_index'] = new_cls_idx
+                self.canvas._shapes[idx]['updated_at'] = get_timestamp()
+                self.save_current_annotations()
+                self.refresh_annotation_table()
+                self.canvas.update()
+    
+    def highlight_annotation_in_list(self, idx):
+        # Iterate rows (checking visible logic?)
+        # Just select if found
+        for r in range(self.annotation_table.rowCount()):
+             item = self.annotation_table.item(r, 0)
+             if item and int(item.text()) == idx:
+                 self.annotation_table.selectRow(r)
+                 break
+
+    def get_class_color(self, idx):
+        if 0 <= idx < len(self.class_data):
+            return self.class_data[idx]['color']
+        return [255, 255, 255] 
+
+    def get_class_name(self, idx):
+        if 0 <= idx < len(self.class_data):
+            return self.class_data[idx]['name']
+        return str(idx)
+
+    def _ensure_coco_loaded(self):
+         out_dir = self.output_dir_edit.text()
+         if not out_dir: return
+         json_path = os.path.join(out_dir, "annotations.json")
+         if not self.coco_data and os.path.exists(json_path):
+             with open(json_path, 'r', encoding='utf-8') as f: self.coco_data = json.load(f)
+
+    def eventFilter(self, source, event):
+        if event.type() == QEvent.KeyPress: # type: ignore
+            if event.key() == Qt.Key_Delete: # type: ignore
+                if source == self.class_table:
+                    row = self.class_table.currentRow()
+                    if row != -1: self.delete_class(row)
+                    return True
+                elif source == self.annotation_table:
+                    items = self.annotation_table.selectedItems()
+                    if items:
+                         id_item = self.annotation_table.item(items[0].row(), 0)
+                         if id_item: self.remove_shape(int(id_item.text()))
+                    return True
+        return super().eventFilter(source, event)
+
+# ============================================
+# QSS
+# ============================================
+QSS_STYLE = """
+/* 全局样式 */
+QWidget { 
+    color: #e0e0e0; 
+    font-family: "Segoe UI", "Microsoft YaHei", sans-serif; 
+    font-size: 14px; 
+}
+QMainWindow { 
+    background-color: #1e1e1e; 
+}
+
+/* 分组框 */
+QGroupBox { 
+    border: 1px solid #3e3e42; 
+    border-radius: 6px; 
+    margin-top: 24px; 
+    font-weight: bold; 
+    background-color: #252526; 
+}
+QGroupBox::title { 
+    subcontrol-origin: margin; 
+    subcontrol-position: top left; 
+    left: 12px; 
+    padding: 0 4px; 
+    color: #007acc; 
+}
+
+/* 按钮通用 */
+QPushButton { 
+    border: 1px solid #3e3e42; 
+    border-radius: 4px; 
+    background-color: #333333; 
+    padding: 6px 12px; 
+    min-height: 24px;
+    color: #f0f0f0;
+}
+QPushButton:hover { 
+    background-color: #3e3e42; 
+    border-color: #007acc; 
+}
+QPushButton:pressed { 
+    background-color: #007acc;
+    color: #ffffff;
+    border-color: #007acc;
+}
+QPushButton:disabled { 
+    background-color: #252526; 
+    color: #6d6d6d; 
+    border-color: #2d2d30; 
+}
+
+/* 删除按钮特定样式 */
+QPushButton#removeButton {
+    background-color: #c0392b; 
+    border: none; 
+    border-radius: 4px; 
+}
+QPushButton#removeButton:hover {
+    background-color: #e74c3c;
+}
+
+/* 输入控件 */
+QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox, QDateTimeEdit { 
+    border: 1px solid #3e3e42; 
+    border-radius: 2px; 
+    padding: 4px; 
+    background-color: #252526; 
+    color: #cccccc; 
+    selection-background-color: #264f78; 
+}
+QLineEdit:focus, QSpinBox:focus, QComboBox:focus, QDateTimeEdit:focus { 
+    border: 1px solid #007acc; 
+}
+
+/* 下拉框 */
+QComboBox::drop-down { 
+    subcontrol-origin: padding; 
+    subcontrol-position: top right; 
+    width: 20px; 
+    border-left-width: 0px;
+    background-color: transparent; 
+}
+QComboBox QAbstractItemView { 
+    background-color: #1f1f1f; 
+    color: #cccccc; 
+    selection-background-color: #3e3e42; 
+    border: 1px solid #3e3e42; 
+}
+
+/* 列表与表格 */
+QListWidget, QTableWidget { 
+    background-color: #1e1e1e; 
+    border: 1px solid #3e3e42; 
+    border-radius: 4px; 
+    alternate-background-color: #252526; 
+    gridline-color: #333333; 
+    selection-background-color: #094771; 
+    selection-color: #ffffff;
+}
+QListWidget::item:selected, QTableWidget::item:selected { 
+    background-color: #094771; 
+    color: white; 
+}
+QListWidget::item:hover, QTableWidget::item:hover {
+    background-color: #2a2d2e;
+}
+
+/* 表头 */
+QHeaderView { 
+    background-color: #252526; 
+    border: none;
+}
+QHeaderView::section { 
+    background-color: #252526; 
+    color: #cccccc; 
+    padding: 6px 4px; 
+    border: none; 
+    border-right: 1px solid #3e3e42; 
+    border-bottom: 1px solid #3e3e42;
+}
+QTableCornerButton::section { 
+    background-color: #252526; 
+    border: 1px solid #3e3e42; 
+}
+
+/* 自定义标签 */
+QLabel[class="sectionTitle"] { 
+    font-size: 16px; 
+    font-weight: bold; 
+    color: #ffffff; 
+    padding-bottom: 6px; 
+    border-bottom: 2px solid #007acc; 
+    margin-bottom: 12px; 
+}
+
+/* 分割线 */
+QSplitter::handle { 
+    background-color: #3e3e42; 
+    width: 1px; 
+}
+
+/* 工具提示 */
+QToolTip { 
+    border: 1px solid #454545; 
+    background-color: #252526; 
+    color: #cccccc; 
+    padding: 4px; 
+}
+
+/* 菜单 */
+QMenu { 
+    background-color: #1f1f1f; 
+    border: 1px solid #454545; 
+    padding: 4px;
+}
+QMenu::item { 
+    padding: 6px 28px 6px 28px; 
+    color: #cccccc; 
+    background-color: transparent; 
+}
+QMenu::item:selected { 
+    background-color: #094771; 
+    color: #ffffff; 
+}
+QMenu::separator { 
+    height: 1px; 
+    background: #454545; 
+    margin: 4px 10px; 
+}
+
+/* 消息框与对话框 */
+QMessageBox, QDialog { 
+    background-color: #1e1e1e; 
+    color: #cccccc; 
+}
+QMessageBox QLabel { 
+    color: #cccccc; 
+}
+
+/* 滚动条 */
+QScrollBar:vertical { 
+    border: none; 
+    background: #1e1e1e; 
+    width: 12px; 
+    margin: 0px; 
+}
+QScrollBar::handle:vertical { 
+    background: #424242; 
+    min-height: 20px; 
+    border-radius: 6px;
+    margin: 2px;
+}
+QScrollBar::handle:vertical:hover { 
+    background: #4f4f4f; 
+}
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { 
+    height: 0px; 
+}
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { 
+    background: none; 
+}
+
+QScrollBar:horizontal { 
+    border: none; 
+    background: #1e1e1e; 
+    height: 12px; 
+    margin: 0px; 
+}
+QScrollBar::handle:horizontal { 
+    background: #424242; 
+    min-width: 20px; 
+    border-radius: 6px;
+    margin: 2px;
+}
+QScrollBar::handle:horizontal:hover { 
+    background: #4f4f4f; 
+}
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { 
+    width: 0px; 
+}
+QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal { 
+    background: none; 
+}
+
+/* 颜色选择器 */
+QColorDialog { 
+    background-color: #1e1e1e; 
+    color: #cccccc; 
+}
+
+QScrollArea { 
+    border: none; 
+    background: transparent; 
+}
+QScrollArea > QWidget > QWidget { 
+    background: transparent; 
+}
+"""
+
+class MainWindow(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle(f" {APP_NAME_FULL} - v{APP_VERSION} ") 
+        self.setMinimumSize(1100, 750)
+        icon_names = ["app_icon.png", "app_icon.ico"]
+        for name in icon_names:
+            icon_path = resource_path(os.path.join("assets", name))
+            if os.path.exists(icon_path):
+                self.setWindowIcon(QIcon(icon_path))
+                break
+        self.central_widget = AnnotationApp() 
+        self.setCentralWidget(self.central_widget)
+
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    app.setStyleSheet(QSS_STYLE)
+    window = MainWindow()
+    window.show()
+    sys.exit(app.exec_())
