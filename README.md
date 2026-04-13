@@ -1,7 +1,6 @@
 # 独立数据标注工具 (Labeling Tool) - 学习交流开源版
 
-[![环境](https://img.shields.io/badge/环境-Python%203.9%20%7C%20PyQt5-brightgreen.svg)](environment.yml)
-[![开源许可证](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![环境](https://img.shields.io/badge/环境-Python%203.9%20%7C%20PyQt5-brightgreen.svg)](environment.yml) [![开源许可证](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 本项目是一个轻量级、完全本地化的计算机视觉数据标注应用程序，基于 Python 和 PyQt5 构建。这是一个纯开源、以学习和交流为目的的个人项目。
 
