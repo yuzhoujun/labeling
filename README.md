@@ -1,5 +1,7 @@
 # 独立数据标注工具 (Labeling Tool) v1.0 用户手册
 
+![版本](https://img.shields.io/badge/版本-v1.0-blue.svg) ![环境](https://img.shields.io/badge/环境-Python%203.9%20%7C%20PyQt5-brightgreen.svg)
+
 ## 📖 简介
 
 **独立数据标注工具** 是一款基于 `Python 3.9|PyQt5` 开发的轻量级、独立的图像目标检测数据标注软件。本工具集成了完整的标注工作流，专注于矩形框（Bounding Box）打标，专门为需要快速进行目标检测数据集制作和管理的用户打造。
