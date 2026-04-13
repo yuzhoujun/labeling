@@ -1,6 +1,6 @@
 # 独立数据标注工具 (Labeling Tool) v1.0 用户手册
 
-![版本](https://img.shields.io/badge/版本-v1.0-blue.svg) ![环境](https://img.shields.io/badge/环境-Python%203.9%20%7C%20PyQt5-brightgreen.svg)
+![版本](https://img.shields.io/badge/版本-v1.0-blue.svg) ![环境](https://img.shields.io/badge/环境-Python%203.9%20%7C%20PyQt5-brightgreen.svg) [![开源许可证](https://img.shields.io/badge/许可证-MIT-red.svg)](LICENSE)
 
 ## 📖 简介
 
@@ -23,19 +23,22 @@
 ## 🚀 环境依赖与运行方式
 
 ### 环境要求
-- Python 3.9+ 
+
+- Python 3.9+
 - PyQt5
 
 ### 运行方式
 
 **方式一：直接运行可执行文件（推荐 Windows 用户）**
 无需配置任何环境，直接双击下载的 `.exe` 应用程序运行即可：
+
 ```bash
 ./LabelingToolN_v1.0.exe
 ```
 
 **方式二：通过源码运行**
 如果需要基于源码运行或进行二次开发，请确保已安装所需依赖：
+
 ```bash
 # 激活你的 Python 环境 (例如 conda activate yolov)
 python labeling_app_v1.0.py
@@ -44,17 +47,21 @@ python labeling_app_v1.0.py
 ## 🛠️ 使用指南
 
 ### 1. 启动与初始化
+
 打开软件后，可以通过界面按钮加载你的图片文件夹或具体图片。软件采用深色主题设计，长时间标注保护视力。
 
 ### 2. 进行标注
+
 - 点击/拖拽鼠标在图像中的目标上绘制**矩形标注框**。
 - 为画好的框分配对应的**分类标签**。
 - 可以随时通过标签管理器来新增或调整你的类别信息。
 
 ### 3. 数据集筛选
+
 点击菜单中的筛选功能，可通过各种条件（如标签名、特定时间、文本等）对当前的数据集进行可视化的高级筛选，快速定位你需要检查或导出的那部分数据。
 
 ### 4. 导出与格式转换
+
 - 确认标注完毕或筛选完成后，点击**导出**按钮。
 - 选择你需要的格式（YOLO、COCO、VOC）。
 - 软件会弹出对应的进度条悬浮窗进行**多线程导出**，支持查看明细以及中途**中止**操作。
@@ -64,7 +71,9 @@ python labeling_app_v1.0.py
 如果你修改了源码并希望自己将其打包为独立的可执行文件，我们在脚本内置了两种推荐的打包方式：
 
 ### 方案一：PyInstaller（常规打包，文件名带 `N` 代表无加密）
+
 *适用版本: PyInstaller 6.0+*
+
 ```powershell
 # Windows
 pyinstaller --noconsole --onefile --icon=assets/app_icon_colored.png --name="LabelingToolN_v1.0" --add-data "assets;assets" labeling_app_v1.0.py
@@ -74,10 +83,13 @@ pyinstaller --noconsole --onefile --icon=assets/app_icon_colored.png --name="Lab
 ```
 
 ### 方案二：Nuitka 编译（高安全性/防反编译，推荐）
+
 由于包含了C++级别的编译，此方案生成的 exe 性能更好且更难被逆向工程。
+
 1. 安装：`pip install nuitka`
 2. 环境要求：需要 C++ 编译器（首次运行 Nuitka 会提示下载 MinGW64，选 Yes 下载即可）。
 3. **注意**：Windows 环境下 Nuitka 必须使用 `.ico` 格式图标，请提前进行转换。
+
 ```powershell
 # Windows
 nuitka --standalone --onefile --enable-plugin=pyqt5 --windows-disable-console --windows-icon-from-ico=assets/app_icon_colored.ico --output-filename=LabelingTool_v1.0.exe --include-data-dir=assets=assets labeling_app_v1.0.py
