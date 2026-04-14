@@ -1,6 +1,6 @@
 ﻿"""
 项目名称: 独立数据标注工具 (Labeling Tool)
-版本: v1.1
+版本: v1.2
 开发环境: Python 3.9.25 | PyQt5
 
 功能说明:
@@ -8,16 +8,15 @@
     当前仅作为目标检测打框专用，后续功能待定中，不一定更新。
 
 使用说明:
-    1. 运行: python labeling_app_v1.1.py
+    1. 运行: python labeling_app_v1.2.py
     2. 导出: 点击导出按钮将自动弹出进度窗口。
 
-1.2计划：
-
-
-
-
-更新日志 (v1.1):
-    待定
+更新日志 (v1.2):
+    [操作池] 升级动作管理，支持更多操作的撤销与重做。
+    [类别管理] 实现类别的新增、删除、名称及颜色修改的完整撤销/重做支持。
+    [组合动作] 支持新建类别并同步画框产生的组合动作历史回退。
+    [画框管理] 增加了标注框随所属类别移除而自动级联调整的保护与撤销恢复逻辑。
+    [交互] 优化表格和画布的焦点跟随，退回历史时不丢失视效焦点。
 
 开发者信息:
     作者: yuzhoujun
@@ -37,7 +36,7 @@ SHOW_ACTION_POOL_DEBUG = True
 # Global App Info
 APP_NAME = "LabelingTool"
 APP_NAME_FULL = "独立数据标注工具 (Labeling Tool)"
-APP_VERSION = "1.1"
+APP_VERSION = "1.2"
 
 from xml.dom import minidom
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
