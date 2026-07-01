@@ -1,6 +1,7 @@
-build/
-dist/
+*build/
+*dist/
 *.spec
 .vscode/
 __pycache__/
 *.ps1
+*.xml
